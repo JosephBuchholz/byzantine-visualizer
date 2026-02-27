@@ -1,0 +1,17 @@
+{
+  "name": "byzantine-visualizer",
+  "version": "1.0.0",
+  "description": "A visualization of the HotStuff Byzantine fault tolerance algorithm",
+  "main": "index.js",
+  "scripts": {
+    "start": "tsx cryptography.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  },
+  "type": "module"
+}
