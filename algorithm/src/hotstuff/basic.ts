@@ -134,7 +134,7 @@ export default class BasicHotStuffNode implements HotStuffNode {
 				this.pauseController = null;
 			}
 
-			this.step(nodes);
+			await this.step(nodes);
 
 			// Sleep for a random short duration to simulate processing time and allow other nodes to run
 			await new Promise((resolve) =>

@@ -62,7 +62,7 @@ export interface HotStuffNode {
 
 function defaultLogger(level: LogLevel, id: number, message: string) {
 	const tag = `[${new Date().toISOString()}] Node ${id}`;
-	return `${tag} ${level}: ${message}`;
+	console.log(`${tag} ${level}: ${message}`);
 }
 
 export function defineNode(id: number, config: HotStuffConfig): HotStuffNode {

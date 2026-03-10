@@ -20,7 +20,7 @@ function createTestNode(id: number, config: Required<HotStuffConfig>): BasicHotS
 	return new BasicHotStuffNode(id, config, new InMemoryDataStore());
 }
 
-// Ran in `BasicHotStufNode::run` on init, but some tests dont want to run the full process
+// Ran in `BasicHotStuffNode::run` on init, but some tests dont want to run the full process
 function setLeaderState(node: BasicHotStuffNode) {
 	node.leaderState = {
 		...node.replicaState,

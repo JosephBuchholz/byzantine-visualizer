@@ -6,7 +6,8 @@
 	"license": "ISC",
 	"author": "",
 	"type": "module",
-	"main": "index.js",
+	"main": "dist/index.js",
+	"exports": "./dist/index.js",
 	"scripts": {
 		"build": "tsc",
 		"fmt": "oxfmt",
