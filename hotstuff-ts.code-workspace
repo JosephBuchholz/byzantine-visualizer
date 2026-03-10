@@ -5,6 +5,9 @@
 		},
     {
       "path": "algorithm"
+    },
+    {
+      "path": "visual"
     }
   ],
 }

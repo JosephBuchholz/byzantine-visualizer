@@ -12,6 +12,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm install --prefix ./algorithm
+      - run: make install
       - run: make format-check
+      - run: make build
       - run: make test

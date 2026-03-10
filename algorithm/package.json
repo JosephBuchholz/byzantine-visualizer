@@ -8,6 +8,7 @@
 	"type": "module",
 	"main": "index.js",
 	"scripts": {
+		"build": "tsc",
 		"fmt": "oxfmt",
 		"fmt:check": "oxfmt --check",
 		"lint": "oxlint",
