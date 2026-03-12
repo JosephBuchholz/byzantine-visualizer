@@ -1,6 +1,6 @@
 import ThresholdCryptoScheme from "./threshold_crypto.js";
 import type { Signature, Key } from "./crypto_types.js";
-import { isStringAnInteger } from "../utils/utils";
+import { isStringAnInteger } from "../utils/utils.js";
 
 /**
  * A mock implementation of threshold cryptography.
@@ -31,9 +31,9 @@ export default class MockCrypto extends ThresholdCryptoScheme {
 				if (
 					sections[0] === "PartialSigned" &&
 					sections[1] === "PrivateKey" &&
-					isStringAnInteger(sections[2])
+					isStringAnInteger(sections[2] ?? "")
 				) {
-					intSignatures.add(parseInt(sections[2], 10));
+					intSignatures.add(parseInt(sections[2] ?? "", 10));
 				}
 			} else {
 				return null;
