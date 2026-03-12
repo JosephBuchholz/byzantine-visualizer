@@ -1,4 +1,4 @@
-import type { Hash } from "./crypto_types";
+import type { Hash } from "./crypto_types.js";
 
 /**
  * A cryptographic hash function (a message digest).

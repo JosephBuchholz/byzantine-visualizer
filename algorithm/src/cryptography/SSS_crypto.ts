@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 
-import ThresholdCryptoScheme from "./threshold_crypto";
-import type { Signature, Key } from "./crypto_types";
+import ThresholdCryptoScheme from "./threshold_crypto.js";
+import type { Signature, Key } from "./crypto_types.js";
 
 /**
  * An implementation of Shamir Secret Sharing.

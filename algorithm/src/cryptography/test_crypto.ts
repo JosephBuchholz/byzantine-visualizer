@@ -1,4 +1,4 @@
-import MockCrypto from "./mock_crypto";
+import MockCrypto from "./mock_crypto.js";
 
 // Just some testing. TODO: turn into unit tests
 

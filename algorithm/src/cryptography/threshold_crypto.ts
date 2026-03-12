@@ -1,4 +1,4 @@
-import type { Signature, Key } from "./crypto_types";
+import type { Signature, Key } from "./crypto_types.js";
 
 /**
  * An abstract interface for threshold crypto scheme implementations.
