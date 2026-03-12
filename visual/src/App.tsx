@@ -9,8 +9,10 @@ export default function App() {
       <Header></Header>
       <div>
         <Group>
-          <Panel defaultSize="50%" minSize="25%" className="bg-side-panel">
-            <p className="text-text m-2">Some controls over here</p>
+          <Panel defaultSize="25%" minSize="20%" className="bg-side-panel">
+            <p className="text-text m-2 font-primary">Some controls over here</p>
+            <p className="text-secondary m-2 font-primary">Some controls over here</p>
+            <p className="text-accent m-2 font-primary">Some controls over here</p>
           </Panel>
 
           <Separator />

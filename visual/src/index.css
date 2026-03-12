@@ -11,12 +11,13 @@
   --color-background: #fbfbfe;
   --color-text: #000000;
   --color-text-on-primary: #000000;
+  --font-primary: "Archivo", sans-serif;
 }
 
 .dark {
   --color-primary: #d95f01;
-  --color-secondary: #002657;
-  --color-accent: #ff2f00;
+  --color-secondary: #0c54b3;
+  --color-accent: #e2340d;
   --color-header: #262642;
   --color-side-panel: #18222f;
   --color-background: #161627;
