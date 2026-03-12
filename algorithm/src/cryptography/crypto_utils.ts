@@ -7,5 +7,5 @@ import type { Hash } from "./crypto_types.js";
  * @returns A fixed-length hash.
  */
 export function hash(msg: string): Hash {
-  return "Hashed:" + msg; // TODO
+	return "Hashed:" + msg; // TODO
 }
