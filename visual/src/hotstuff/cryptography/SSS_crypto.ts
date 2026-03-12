@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
+
 import ThresholdCryptoScheme from "./threshold_crypto";
 import type { Signature, Key } from "./crypto_types";
 
