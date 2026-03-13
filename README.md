@@ -9,4 +9,4 @@ Use the `Makefile` recipes to format, lint, test, and run the project.
 
 ## Generative AI Disclosure
 
-Frontend Canvas Component - Student Joseph Buchholz: I used Co-Pilot as an auto-complete tool as I was coding – no more than 2 lines were generated at the time.
+Frontend Canvas Component - Student Joseph Buchholz: I used Co-Pilot as an auto-complete tool as I was coding: only around 2-3 lines were generated at the time.
