@@ -1,27 +1,21 @@
 import Konva from "konva";
 import type { Point } from "./types";
 
-export const REPLICA_SIZE = 100;
-
-export type ReplicaType = "default" | "leader" | "adversary";
-
-export default abstract class ReplicaObject {
+export default abstract class MessageObject {
   position: Point;
   color: string;
-  shape: "circle" | "leader" | "triangle";
-  spin: boolean;
   angle: number;
-  konvaNode: Konva.Shape | Konva.Group | null;
-  type: ReplicaType;
+  konvaNode: Konva.Rect | null;
 
-  constructor(type: ReplicaType) {
-    this.type = type;
+  constructor() {
     this.position = { x: 0.0, y: 0.0 };
     this.color = "primary";
-    this.shape = "circle";
-    this.spin = false;
     this.angle = 0;
-    this.konvaNode = null;
+    this.konvaNode = new Konva.Rect({
+      width: 10,
+      height: 100,
+      fill: "#000000",
+    });
   }
 
   setPosition(position: Point) {
@@ -32,10 +26,6 @@ export default abstract class ReplicaObject {
   }
 
   onUpdate(deltaTime: number) {
-    if (this.spin && this.konvaNode) {
-      this.angle += 0.05 * deltaTime;
-      this.konvaNode.rotation(this.angle);
-    }
   }
 
   onUpdateColor(getColor: (colorName: string) => string | undefined) {

@@ -23,7 +23,7 @@ export default function ThemeProvider({ children }: { children: React.ReactNode 
   const [theme, setTheme] = useState<Theme>(defaultMode);
 
   useEffect(() => {
-    changeTheme(defaultMode)
+    changeTheme(defaultMode);
   }, [defaultMode]);
 
   const getColor = (color: string) => {

@@ -6,5 +6,6 @@ export interface Point {
 export interface StageObject {
   stageWidth: number;
   stageHeight: number;
+  stagePosition: Point;
   stageScale: number;
 }

@@ -1,58 +1,91 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+  type Ref,
+  type RefObject,
+} from "react";
 import Konva from "konva";
 import { useTheme } from "../hooks/useTheme";
 import ReplicaObject from "../objects/ReplicaObject";
 import makeReplica from "../objects/makeReplica";
-import type { StageObject } from "../objects/types";
+import type { Point, StageObject } from "../objects/types";
+import type MessageObject from "../objects/MessageObject";
 
-function positionReplicasInCircle(replicas: ReplicaObject[], radius: number) {
-  const centerX = window.innerWidth / 2;
-  const centerY = window.innerHeight / 2;
-
+function positionReplicasInCircle(replicas: ReplicaObject[], radius: number, center: Point) {
   const angleStep = (2 * Math.PI) / replicas.length;
 
   replicas.forEach((replica, index) => {
     const angle = index * angleStep;
-    const x = centerX + radius * Math.cos(angle);
-    const y = centerY + radius * Math.sin(angle);
+    const x = center.x + radius * Math.cos(angle);
+    const y = center.y + radius * Math.sin(angle);
 
     replica.setPosition({ x, y });
   });
 }
 
-export default function Canvas() {
+export interface CanvasHandle {
+  sendMessage: (message: string) => void;
+  updateNumReplicas: (numReplicas: number) => void;
+  updateNumFaults: (numFaults: number) => void;
+}
+
+export const Canvas = forwardRef<CanvasHandle, { speed: number; stage: StageObject }>(({ speed, stage }, ref) => {
   const { getColor } = useTheme();
 
-  const [stage, setStage] = useState<StageObject>({
-    stageWidth: window.innerWidth,
-    stageHeight: window.innerHeight,
-    stageScale: 1.0,
-  });
+  // Speed calculations
+  const normalSpeed = 25;
+  const growthFactor = 2;
+  const speedPercent = Math.pow(speed, growthFactor) / Math.pow(normalSpeed, growthFactor);
 
   const containerRef = useRef(null);
   const stageRef = useRef<Konva.Stage | null>(null);
 
-  const replicas: ReplicaObject[] = useMemo(
-    () => [
-      makeReplica("default"),
-      makeReplica("default"),
-      makeReplica("default"),
-      makeReplica("leader"),
-      makeReplica("default"),
-      makeReplica("adversary"),
-    ],
-    [],
-  );
+  const replicas: ReplicaObject[] = useMemo(() => [], []);
 
-  positionReplicasInCircle(replicas, 300);
+  const addNewReplica = (replicas: ReplicaObject[], newReplica: ReplicaObject) => {
+    replicas.push(newReplica);
+    if (newReplica.konvaNode) {
+      stageRef.current?.getLayers()[0].add(newReplica.konvaNode);
+    }
+    positionReplicasInCircle(replicas, 300, { x: stage.stageWidth / 2, y: stage.stageHeight / 2 });
+  };
 
+  useImperativeHandle(ref, () => ({
+    sendMessage: (message: string) => {
+      console.log("Message received in Canvas:", message);
+    },
+    updateNumReplicas: (numReplicas: number) => {
+      if (numReplicas > replicas.length) {
+        for (let i = replicas.length; i < numReplicas; i++) {
+          const makeFault = Math.random() < 0.5;
+
+          addNewReplica(replicas, makeReplica(makeFault ? "adversary" : "default"));
+        }
+      } else if (numReplicas < replicas.length) {
+        const replicasToRemove = replicas.splice(numReplicas);
+        replicasToRemove.forEach((replica) => {
+          if (replica.konvaNode) {
+            replica.konvaNode.destroy();
+          }
+        });
+      }
+    },
+    updateNumFaults: (numFaults: number) => {
+      console.log("Updating number of faults to:", numFaults);
+    },
+  }));
+
+  positionReplicasInCircle(replicas, 300, { x: stage.stageWidth / 2, y: stage.stageHeight / 2 });
   useEffect(() => {
     // Initialization
     stageRef.current = new Konva.Stage({
       container: containerRef.current ?? undefined,
       width: stage.stageWidth,
       height: stage.stageHeight,
-      draggable: true,
     });
 
     const layer = new Konva.Layer();
@@ -66,8 +99,10 @@ export default function Canvas() {
 
     // Main animation loop
     const mainAnimation = new Konva.Animation(function (frame) {
+      const deltaTime = frame.timeDiff * speedPercent;
+
       replicas.forEach((replica) => {
-        replica.onUpdate(frame);
+        replica.onUpdate(deltaTime);
       });
     }, layer);
 
@@ -86,4 +121,4 @@ export default function Canvas() {
   }, [replicas, getColor]);
 
   return <div ref={containerRef} />;
-}
+});
