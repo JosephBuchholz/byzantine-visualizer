@@ -107,6 +107,14 @@ export default function App() {
             >
               Send Message
             </button>
+            <button
+              className="bg-primary text-text-on-primary font-primary font-semibold p-2 rounded-sm ml-2 hover:bg-primary-hover hover:cursor-pointer"
+              onClick={() => {
+                handleSendMessage("Test");
+              }}
+            >
+              Test
+            </button>
           </Panel>
 
           <Separator />

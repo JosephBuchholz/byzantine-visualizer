@@ -1,4 +1,3 @@
-
 export default function LabeledNumericInput({
   label,
   placeholder,
@@ -23,4 +22,3 @@ export default function LabeledNumericInput({
     </div>
   );
 }
-

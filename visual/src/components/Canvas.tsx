@@ -1,29 +1,22 @@
-import React, {
-  forwardRef,
-  useEffect,
-  useImperativeHandle,
-  useMemo,
-  useRef,
-  useState,
-  type Ref,
-  type RefObject,
-} from "react";
+import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from "react";
 import Konva from "konva";
 import { useTheme } from "../hooks/useTheme";
 import ReplicaObject from "../objects/ReplicaObject";
 import makeReplica from "../objects/makeReplica";
 import type { Point, StageObject } from "../objects/types";
-import type MessageObject from "../objects/MessageObject";
+import MessageObject from "../objects/MessageObject";
 
-function positionReplicasInCircle(replicas: ReplicaObject[], radius: number, center: Point) {
-  const angleStep = (2 * Math.PI) / replicas.length;
+function positionReplicasInCircle(replicas: Map<string, ReplicaObject>, radius: number, center: Point) {
+  const angleStep = (2 * Math.PI) / replicas.size;
 
-  replicas.forEach((replica, index) => {
+  let index = 0;
+  replicas.forEach((replica) => {
     const angle = index * angleStep;
     const x = center.x + radius * Math.cos(angle);
     const y = center.y + radius * Math.sin(angle);
 
     replica.setPosition({ x, y });
+    index++;
   });
 }
 
@@ -44,33 +37,65 @@ export const Canvas = forwardRef<CanvasHandle, { speed: number; stage: StageObje
   const containerRef = useRef(null);
   const stageRef = useRef<Konva.Stage | null>(null);
 
-  const replicas: ReplicaObject[] = useMemo(() => [], []);
+  const replicas: Map<string, ReplicaObject> = useMemo(() => new Map(), []);
+  const messages: MessageObject[] = useMemo(() => [], []);
 
-  const addNewReplica = (replicas: ReplicaObject[], newReplica: ReplicaObject) => {
-    replicas.push(newReplica);
+  const addNewReplica = (replicas: Map<string, ReplicaObject>, newReplica: ReplicaObject) => {
+    replicas.set(newReplica.id, newReplica);
     if (newReplica.konvaNode) {
       stageRef.current?.getLayers()[0].add(newReplica.konvaNode);
     }
     positionReplicasInCircle(replicas, 300, { x: stage.stageWidth / 2, y: stage.stageHeight / 2 });
   };
 
+  const addNewMessage = (messages: MessageObject[], newMessage: MessageObject) => {
+    messages.push(newMessage);
+    if (newMessage.konvaNode) {
+      stageRef.current?.getLayers()[0].add(newMessage.konvaNode);
+    }
+    newMessage.onUpdateColor(getColor);
+  };
+
   useImperativeHandle(ref, () => ({
     sendMessage: (message: string) => {
-      console.log("Message received in Canvas:", message);
+      const sourceIndex = Math.floor(Math.random() * replicas.size);
+      const destinationIndex = Math.floor(Math.random() * replicas.size);
+      const sourceReplica = Array.from(replicas.values())[sourceIndex];
+      const destinationReplicaID = Array.from(replicas.keys())[destinationIndex];
+
+      const newMessage = new MessageObject(sourceReplica.position, destinationReplicaID, () => {
+        const index = messages.indexOf(newMessage);
+        if (index > -1) {
+          // Remove the message from the array
+          messages.splice(index, 1);
+        } else {
+          console.warn("Message not found in array during onDestroy:", message);
+        }
+
+        if (newMessage.konvaNode) {
+          newMessage.konvaNode.destroy();
+        }
+      });
+      addNewMessage(messages, newMessage);
     },
     updateNumReplicas: (numReplicas: number) => {
-      if (numReplicas > replicas.length) {
-        for (let i = replicas.length; i < numReplicas; i++) {
+      if (numReplicas > replicas.size) {
+        for (let i = replicas.size; i < numReplicas; i++) {
           const makeFault = Math.random() < 0.5;
 
           addNewReplica(replicas, makeReplica(makeFault ? "adversary" : "default"));
         }
-      } else if (numReplicas < replicas.length) {
-        const replicasToRemove = replicas.splice(numReplicas);
+      } else if (numReplicas < replicas.size) {
+        const replicasToRemove = Array.from(replicas.values()).slice(numReplicas);
         replicasToRemove.forEach((replica) => {
           if (replica.konvaNode) {
             replica.konvaNode.destroy();
           }
+        });
+
+        // Remove the replicas from the map
+        replicasToRemove.forEach((replica) => {
+          replicas.delete(replica.id);
         });
       }
     },
@@ -79,8 +104,9 @@ export const Canvas = forwardRef<CanvasHandle, { speed: number; stage: StageObje
     },
   }));
 
-  positionReplicasInCircle(replicas, 300, { x: stage.stageWidth / 2, y: stage.stageHeight / 2 });
   useEffect(() => {
+    positionReplicasInCircle(replicas, 300, { x: stage.stageWidth / 2, y: stage.stageHeight / 2 });
+
     // Initialization
     stageRef.current = new Konva.Stage({
       container: containerRef.current ?? undefined,
@@ -97,12 +123,25 @@ export const Canvas = forwardRef<CanvasHandle, { speed: number; stage: StageObje
       }
     });
 
+    messages.forEach((message) => {
+      if (message.konvaNode) {
+        layer.add(message.konvaNode);
+      }
+    });
+
     // Main animation loop
     const mainAnimation = new Konva.Animation(function (frame) {
       const deltaTime = frame.timeDiff * speedPercent;
 
       replicas.forEach((replica) => {
         replica.onUpdate(deltaTime);
+      });
+
+      messages.forEach((message) => {
+        message.onUpdate(deltaTime, (replicaID: string) => {
+          const replica = replicas.get(replicaID);
+          return replica ? replica.position : null;
+        });
       });
     }, layer);
 
@@ -118,7 +157,11 @@ export const Canvas = forwardRef<CanvasHandle, { speed: number; stage: StageObje
     replicas.forEach((replica) => {
       replica.onUpdateColor(getColor);
     });
-  }, [replicas, getColor]);
+
+    messages.forEach((message) => {
+      message.onUpdateColor(getColor);
+    });
+  }, [replicas, messages, getColor]);
 
   return <div ref={containerRef} />;
 });

@@ -6,6 +6,7 @@ export const REPLICA_SIZE = 100;
 export type ReplicaType = "default" | "leader" | "adversary";
 
 export default abstract class ReplicaObject {
+  id: string;
   position: Point;
   color: string;
   shape: "circle" | "leader" | "triangle";
@@ -15,6 +16,7 @@ export default abstract class ReplicaObject {
   type: ReplicaType;
 
   constructor(type: ReplicaType) {
+    this.id = crypto.randomUUID();
     this.type = type;
     this.position = { x: 0.0, y: 0.0 };
     this.color = "primary";
