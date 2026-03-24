@@ -65,7 +65,15 @@ function defaultLogger(level: LogLevel, id: number, message: string) {
 	console.log(`${tag} ${level}: ${message}`);
 }
 
+// A function available to other files that creates and returns a HotStuff node
 export function defineNode(id: number, config: HotStuffConfig): HotStuffNode {
-	config.logger ??= defaultLogger;
-	return new BasicHotStuffNode(id, config as Required<HotStuffConfig>, new InMemoryDataStore());
+	
+    // If the caller did not provide a logger in the config, use defaultLogger as the fallback
+    config.logger ??= defaultLogger;
+	
+    // Create and return a brand new HotStuff node with:
+    // - id: the node's unique identifier
+    // - config as Required<HotStuffConfig>: the fully complete config (logger is now guaranteed to exist)
+    // - new InMemoryDataStore(): a brand new empty data store for this node to use
+    return new BasicHotStuffNode(id, config as Required<HotStuffConfig>, new InMemoryDataStore());
 }
