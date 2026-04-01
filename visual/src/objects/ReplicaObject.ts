@@ -14,8 +14,10 @@ export default abstract class ReplicaObject {
   angle: number;
   konvaNode: Konva.Shape | Konva.Group | null;
   type: ReplicaType;
+  onHoverCallback?: (id: string) => void;
+  onUnhoverCallback?: (id: string) => void;
 
-  constructor(type: ReplicaType) {
+  constructor(type: ReplicaType, onHover?: (id: string) => void) {
     this.id = crypto.randomUUID();
     this.type = type;
     this.position = { x: 0.0, y: 0.0 };
@@ -24,6 +26,49 @@ export default abstract class ReplicaObject {
     this.spin = false;
     this.angle = 0;
     this.konvaNode = null;
+    this.onHoverCallback = onHover;
+  }
+
+  setOnHover(onHover: (id: string) => void) {
+    this.onHoverCallback = onHover;
+  }
+
+  setOnUnhovered(onUnhovered: (id: string) => void) {
+    this.onUnhoverCallback = onUnhovered;
+  }
+
+  onHover() {
+    this.konvaNode?.to({
+      scaleX: 1.1,
+      scaleY: 1.1,
+      duration: 0.01,
+    });
+  }
+
+  onUnhover() {
+    this.konvaNode?.to({
+      scaleX: 1,
+      scaleY: 1,
+      duration: 0.01,
+    });
+  }
+
+  initKonvaNode() {
+    if (this.konvaNode) {
+      this.konvaNode.on("mouseover", () => {
+        this.onHover();
+        if (this.onHoverCallback) {
+          this.onHoverCallback(this.id);
+        }
+      });
+
+      this.konvaNode.on("mouseleave", () => {
+        this.onUnhover();
+        if (this.onUnhoverCallback) {
+          this.onUnhoverCallback(this.id);
+        }
+      });
+    }
   }
 
   setPosition(position: Point) {

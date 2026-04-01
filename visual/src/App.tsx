@@ -7,6 +7,7 @@ import LabeledInput from "./components/LabeledInput";
 import { useEffect, useRef, useState } from "react";
 import LabeledNumericInput from "./components/LabeledNumericInput";
 import type { StageObject } from "./objects/types";
+import type ReplicaObject from "./objects/ReplicaObject";
 
 const DEFAULT_SPEED = 25;
 
@@ -29,6 +30,7 @@ export default function App() {
     stageScale: 1.0,
   });
   const [message, setMessage] = useState("");
+  const [hoveredReplica, setHoveredReplica] = useState<ReplicaObject | null>(null);
 
   // Initalize
   useEffect(() => {
@@ -68,6 +70,10 @@ export default function App() {
       ...prevStage,
       stageWidth: window.innerWidth * (panelSize.asPercentage / 100),
     }));
+  };
+
+  const onHoverReplica = (replica: ReplicaObject) => {
+    setHoveredReplica(replica);
   };
 
   return (
@@ -115,12 +121,22 @@ export default function App() {
             >
               Test
             </button>
+
+            {hoveredReplica && (
+              <>
+                <h4 className="text-text mx-2 mt-4 mb-1 font-primary text-xl font-semibold">Replica Information</h4>
+                <hr className="border-accent border mx-2"></hr>
+
+                <p className="text-text font-primary mx-2">ID: {hoveredReplica.id}</p>
+                <p className="text-text font-primary mx-2">Type: {hoveredReplica.type}</p>
+              </>
+            )}
           </Panel>
 
           <Separator />
 
           <Panel minSize="25%" className="bg-background" onResize={handleCanvasPanelResize}>
-            <Canvas ref={canvasRef} speed={speed} stage={stage}></Canvas>
+            <Canvas ref={canvasRef} speed={speed} stage={stage} onHover={onHoverReplica}></Canvas>
           </Panel>
         </Group>
       </div>

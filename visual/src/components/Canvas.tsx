@@ -5,6 +5,8 @@ import ReplicaObject from "../objects/ReplicaObject";
 import makeReplica from "../objects/makeReplica";
 import type { Point, StageObject } from "../objects/types";
 import MessageObject from "../objects/MessageObject";
+import type VisObject from "../objects/VisObject";
+import TextObject from "../objects/TextObject";
 
 function positionReplicasInCircle(replicas: Map<string, ReplicaObject>, radius: number, center: Point) {
   const angleStep = (2 * Math.PI) / replicas.size;
@@ -26,7 +28,10 @@ export interface CanvasHandle {
   updateNumFaults: (numFaults: number) => void;
 }
 
-export const Canvas = forwardRef<CanvasHandle, { speed: number; stage: StageObject }>(({ speed, stage }, ref) => {
+export const Canvas = forwardRef<
+  CanvasHandle,
+  { speed: number; stage: StageObject; onHover?: (replica: ReplicaObject) => void }
+>(({ speed, stage, onHover }, ref) => {
   const { getColor } = useTheme();
 
   // Speed calculations
@@ -39,6 +44,8 @@ export const Canvas = forwardRef<CanvasHandle, { speed: number; stage: StageObje
 
   const replicas: Map<string, ReplicaObject> = useMemo(() => new Map(), []);
   const messages: MessageObject[] = useMemo(() => [], []);
+  const objects: VisObject[] = useMemo(() => [], []);
+  const phaseText = useMemo(() => new TextObject("Phase: Pre-prepare", "text", { x: 15, y: 15 }), []);
 
   const addNewReplica = (replicas: Map<string, ReplicaObject>, newReplica: ReplicaObject) => {
     replicas.set(newReplica.id, newReplica);
@@ -50,10 +57,18 @@ export const Canvas = forwardRef<CanvasHandle, { speed: number; stage: StageObje
 
   const addNewMessage = (messages: MessageObject[], newMessage: MessageObject) => {
     messages.push(newMessage);
-    if (newMessage.konvaNode) {
-      stageRef.current?.getLayers()[0].add(newMessage.konvaNode);
-    }
+    newMessage.addToLayer(stageRef.current?.getLayers()[0] ?? null);
     newMessage.onUpdateColor(getColor);
+  };
+
+  const addNewObject = (objects: VisObject[], newObject: VisObject) => {
+    objects.push(newObject);
+    newObject.addToLayer(stageRef.current?.getLayers()[0] ?? null);
+    newObject.onUpdateColor(getColor);
+  };
+
+  const onHoverReplica = (replicaID: string) => {
+    onHover?.(replicas.get(replicaID)!);
   };
 
   useImperativeHandle(ref, () => ({
@@ -63,19 +78,26 @@ export const Canvas = forwardRef<CanvasHandle, { speed: number; stage: StageObje
       const sourceReplica = Array.from(replicas.values())[sourceIndex];
       const destinationReplicaID = Array.from(replicas.keys())[destinationIndex];
 
-      const newMessage = new MessageObject(sourceReplica.position, destinationReplicaID, () => {
-        const index = messages.indexOf(newMessage);
-        if (index > -1) {
-          // Remove the message from the array
-          messages.splice(index, 1);
-        } else {
-          console.warn("Message not found in array during onDestroy:", message);
-        }
+      const newMessage = new MessageObject(
+        sourceReplica.position,
+        destinationReplicaID,
+        message,
+        () => {
+          const index = messages.indexOf(newMessage);
+          if (index > -1) {
+            // Remove the message from the array
+            messages.splice(index, 1);
+          } else {
+            console.warn("Message not found in array during onDestroy:", message);
+          }
 
-        if (newMessage.konvaNode) {
-          newMessage.konvaNode.destroy();
-        }
-      });
+          newMessage.destoryKonvaNode();
+        },
+        (replicaID: string) => {
+          const replica = replicas.get(replicaID);
+          return replica ? replica.position : null;
+        },
+      );
       addNewMessage(messages, newMessage);
     },
     updateNumReplicas: (numReplicas: number) => {
@@ -83,7 +105,7 @@ export const Canvas = forwardRef<CanvasHandle, { speed: number; stage: StageObje
         for (let i = replicas.size; i < numReplicas; i++) {
           const makeFault = Math.random() < 0.5;
 
-          addNewReplica(replicas, makeReplica(makeFault ? "adversary" : "default"));
+          addNewReplica(replicas, makeReplica(makeFault ? "adversary" : "default", onHoverReplica));
         }
       } else if (numReplicas < replicas.size) {
         const replicasToRemove = Array.from(replicas.values()).slice(numReplicas);
@@ -117,6 +139,8 @@ export const Canvas = forwardRef<CanvasHandle, { speed: number; stage: StageObje
     const layer = new Konva.Layer();
     stageRef.current.add(layer);
 
+    addNewObject(objects, phaseText);
+
     replicas.forEach((replica) => {
       if (replica.konvaNode) {
         layer.add(replica.konvaNode);
@@ -124,9 +148,11 @@ export const Canvas = forwardRef<CanvasHandle, { speed: number; stage: StageObje
     });
 
     messages.forEach((message) => {
-      if (message.konvaNode) {
-        layer.add(message.konvaNode);
-      }
+      message.addToLayer(layer);
+    });
+
+    objects.forEach((object) => {
+      object.addToLayer(layer);
     });
 
     // Main animation loop
@@ -138,10 +164,11 @@ export const Canvas = forwardRef<CanvasHandle, { speed: number; stage: StageObje
       });
 
       messages.forEach((message) => {
-        message.onUpdate(deltaTime, (replicaID: string) => {
-          const replica = replicas.get(replicaID);
-          return replica ? replica.position : null;
-        });
+        message.onUpdate(deltaTime);
+      });
+
+      objects.forEach((object) => {
+        object.onUpdate(deltaTime);
       });
     }, layer);
 
@@ -161,7 +188,11 @@ export const Canvas = forwardRef<CanvasHandle, { speed: number; stage: StageObje
     messages.forEach((message) => {
       message.onUpdateColor(getColor);
     });
-  }, [replicas, messages, getColor]);
+
+    objects.forEach((object) => {
+      object.onUpdateColor(getColor);
+    });
+  }, [replicas, messages, objects, getColor]);
 
   return <div ref={containerRef} />;
 });

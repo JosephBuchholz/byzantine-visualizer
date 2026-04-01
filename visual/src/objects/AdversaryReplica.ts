@@ -4,8 +4,8 @@ import ReplicaObject, { REPLICA_SIZE } from "./ReplicaObject";
 const ADVERSARY_REPLICA_COLOR = "accent";
 
 export default class AdversaryReplica extends ReplicaObject {
-  constructor(type: "adversary") {
-    super(type);
+  constructor(type: "adversary", onHover?: (id: string) => void) {
+    super(type, onHover);
     this.shape = "triangle";
     this.color = ADVERSARY_REPLICA_COLOR;
     this.spin = true;
@@ -14,5 +14,7 @@ export default class AdversaryReplica extends ReplicaObject {
       radius: REPLICA_SIZE / 2,
       fill: "#000000",
     });
+
+    this.initKonvaNode();
   }
 }

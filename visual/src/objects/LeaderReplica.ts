@@ -5,8 +5,8 @@ import type { Point } from "./types";
 const LEADER_REPLICA_COLOR = "primary";
 
 export default class LeaderReplica extends ReplicaObject {
-  constructor(type: "leader") {
-    super(type);
+  constructor(type: "leader", onHover?: (id: string) => void) {
+    super(type, onHover);
     this.shape = "leader";
     this.color = LEADER_REPLICA_COLOR;
 
@@ -21,6 +21,8 @@ export default class LeaderReplica extends ReplicaObject {
       fill: "#000000",
     });
     this.konvaNode.add(body);
+
+    this.initKonvaNode();
 
     /*const text = new Konva.Text({
         text: "Leader",
