@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ThemeContext, type Theme, type ThemeCTX } from "./ThemeContext";
 
 function getTailwindColor(colorName: string) {
@@ -9,8 +9,22 @@ function getTailwindColor(colorName: string) {
   return colorValue || undefined;
 }
 
+function changeTheme(theme: "dark" | "light") {
+  if (theme === "dark") {
+    document.documentElement.classList.add("dark");
+  } else {
+    document.documentElement.classList.remove("dark");
+  }
+}
+
 export default function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setTheme] = useState<Theme>("light");
+  const defaultIsDarkMode = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)");
+  const defaultMode = defaultIsDarkMode ? "dark" : "light";
+  const [theme, setTheme] = useState<Theme>(defaultMode);
+
+  useEffect(() => {
+    changeTheme(defaultMode);
+  }, [defaultMode]);
 
   const getColor = (color: string) => {
     return getTailwindColor(color);
@@ -18,11 +32,7 @@ export default function ThemeProvider({ children }: { children: React.ReactNode 
 
   const onChangeTheme = (theme: Theme) => {
     setTheme(theme);
-    if (theme === "dark") {
-      document.documentElement.classList.add("dark");
-    } else {
-      document.documentElement.classList.remove("dark");
-    }
+    changeTheme(theme);
   };
 
   const themeValue: ThemeCTX = {

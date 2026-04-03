@@ -1,4 +1,4 @@
-import type { Hash } from "./crypto_types";
+import type { Hash } from "./crypto_types.js";
 
 /**
  * A cryptographic hash function (a message digest).
@@ -7,5 +7,5 @@ import type { Hash } from "./crypto_types";
  * @returns A fixed-length hash.
  */
 export function hash(msg: string): Hash {
-  return "Hashed:" + msg; // TODO
+	return "Hashed:" + msg; // TODO
 }
