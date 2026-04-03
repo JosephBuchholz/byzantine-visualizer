@@ -23,7 +23,13 @@ export default class MessageObject extends VisObject {
   onDestroy: () => void;
   getReplicaPosition: (replicaID: string) => Point | null;
 
-  constructor(initialPosition: Point, destinationReplicaID: string, message: string, onDestroy: () => void, getReplicaPosition: (replicaID: string) => Point | null) {
+  constructor(
+    initialPosition: Point,
+    destinationReplicaID: string,
+    message: string,
+    onDestroy: () => void,
+    getReplicaPosition: (replicaID: string) => Point | null,
+  ) {
     super(initialPosition);
     this.onDestroy = onDestroy;
     this.destinationReplicaID = destinationReplicaID;
@@ -86,7 +92,7 @@ export default class MessageObject extends VisObject {
     }
   }
 
-  destoryKonvaNode() {
+  destroyKonvaNode() {
     if (this.konvaNode) {
       this.konvaNode.destroy();
       this.konvaNode = null;

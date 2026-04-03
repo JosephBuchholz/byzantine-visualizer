@@ -1,11 +1,12 @@
 import Konva from "konva";
 import ReplicaObject, { REPLICA_SIZE } from "./ReplicaObject";
+import type { SimReplica } from "../simulation/simulationManager";
 
 const ADVERSARY_REPLICA_COLOR = "accent";
 
 export default class AdversaryReplica extends ReplicaObject {
-  constructor(type: "adversary", onHover?: (id: string) => void) {
-    super(type, onHover);
+  constructor(simReplica: SimReplica, onHover?: (id: string) => void) {
+    super(simReplica, onHover);
     this.shape = "triangle";
     this.color = ADVERSARY_REPLICA_COLOR;
     this.spin = true;

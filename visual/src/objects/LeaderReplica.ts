@@ -1,12 +1,13 @@
 import Konva from "konva";
 import ReplicaObject, { REPLICA_SIZE } from "./ReplicaObject";
 import type { Point } from "./types";
+import type { SimReplica } from "../simulation/simulationManager";
 
 const LEADER_REPLICA_COLOR = "primary";
 
 export default class LeaderReplica extends ReplicaObject {
-  constructor(type: "leader", onHover?: (id: string) => void) {
-    super(type, onHover);
+  constructor(simReplica: SimReplica, onHover?: (id: string) => void) {
+    super(simReplica, onHover);
     this.shape = "leader";
     this.color = LEADER_REPLICA_COLOR;
 

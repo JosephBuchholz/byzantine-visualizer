@@ -22,6 +22,13 @@ export default class TextObject extends VisObject {
     this.setPosition(this.position);
   }
 
+  setText(newText: string) {
+    this.text = newText;
+    if (this.konvaNode) {
+      this.konvaNode.text(this.text);
+    }
+  }
+
   addToLayer(layer: Konva.Layer | null) {
     if (!layer) {
       return;
@@ -32,7 +39,7 @@ export default class TextObject extends VisObject {
     }
   }
 
-  destoryKonvaNode() {
+  destroyKonvaNode() {
     if (this.konvaNode) {
       this.konvaNode.destroy();
       this.konvaNode = null;

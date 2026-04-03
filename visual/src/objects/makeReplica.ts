@@ -1,15 +1,15 @@
+import type { SimReplica } from "../simulation/simulationManager";
 import AdversaryReplica from "./AdversaryReplica";
 import DefaultReplica from "./DefaultReplica";
 import LeaderReplica from "./LeaderReplica";
-import type { ReplicaType } from "./ReplicaObject";
 
-export default function makeReplica(type: ReplicaType, onHover?: (id: string) => void) {
-  switch (type) {
+export default function makeReplica(simReplica: SimReplica, onHover?: (id: string) => void) {
+  switch (simReplica.type) {
     case "default":
-      return new DefaultReplica("default", onHover);
+      return new DefaultReplica(simReplica, onHover);
     case "leader":
-      return new LeaderReplica("leader", onHover);
+      return new LeaderReplica(simReplica, onHover);
     case "adversary":
-      return new AdversaryReplica("adversary", onHover);
+      return new AdversaryReplica(simReplica, onHover);
   }
 }

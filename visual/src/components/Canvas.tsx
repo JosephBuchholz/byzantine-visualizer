@@ -1,4 +1,4 @@
-import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from "react";
 import Konva from "konva";
 import { useTheme } from "../hooks/useTheme";
 import ReplicaObject from "../objects/ReplicaObject";
@@ -7,6 +7,8 @@ import type { Point, StageObject } from "../objects/types";
 import MessageObject from "../objects/MessageObject";
 import type VisObject from "../objects/VisObject";
 import TextObject from "../objects/TextObject";
+import SimMessage, { CLIENT_ID } from "../simulation/SimMessage";
+import type { SimReplica } from "../simulation/simulationManager";
 
 function positionReplicasInCircle(replicas: Map<string, ReplicaObject>, radius: number, center: Point) {
   const angleStep = (2 * Math.PI) / replicas.size;
@@ -23,9 +25,10 @@ function positionReplicasInCircle(replicas: Map<string, ReplicaObject>, radius: 
 }
 
 export interface CanvasHandle {
-  sendMessage: (message: string) => void;
-  updateNumReplicas: (numReplicas: number) => void;
-  updateNumFaults: (numFaults: number) => void;
+  sendMessage: (message: SimMessage) => void;
+  changePhase: (phase: string) => void;
+  addNewReplica: (replica: SimReplica) => void;
+  removeReplica: (replicaID: string) => void;
 }
 
 export const Canvas = forwardRef<
@@ -45,13 +48,14 @@ export const Canvas = forwardRef<
   const replicas: Map<string, ReplicaObject> = useMemo(() => new Map(), []);
   const messages: MessageObject[] = useMemo(() => [], []);
   const objects: VisObject[] = useMemo(() => [], []);
-  const phaseText = useMemo(() => new TextObject("Phase: Pre-prepare", "text", { x: 15, y: 15 }), []);
+  const phaseText = useMemo(() => new TextObject("Phase: Initial", "text", { x: 15, y: 15 }), []);
 
   const addNewReplica = (replicas: Map<string, ReplicaObject>, newReplica: ReplicaObject) => {
     replicas.set(newReplica.id, newReplica);
     if (newReplica.konvaNode) {
       stageRef.current?.getLayers()[0].add(newReplica.konvaNode);
     }
+    newReplica.onUpdateColor(getColor);
     positionReplicasInCircle(replicas, 300, { x: stage.stageWidth / 2, y: stage.stageHeight / 2 });
   };
 
@@ -71,17 +75,27 @@ export const Canvas = forwardRef<
     onHover?.(replicas.get(replicaID)!);
   };
 
-  useImperativeHandle(ref, () => ({
-    sendMessage: (message: string) => {
-      const sourceIndex = Math.floor(Math.random() * replicas.size);
-      const destinationIndex = Math.floor(Math.random() * replicas.size);
-      const sourceReplica = Array.from(replicas.values())[sourceIndex];
-      const destinationReplicaID = Array.from(replicas.keys())[destinationIndex];
+  const getReplicaPositionFromID = (replicaID: string): Point => {
+    if (replicaID === CLIENT_ID) {
+      return { x: stage.stageWidth / 2, y: stage.stageHeight - 100 };
+    }
 
+    const replica = replicas.get(replicaID);
+    if (!replica) {
+      console.error("Replica with ID not found:", replicaID);
+      return { x: 0, y: 0 };
+    }
+
+    return replica.position;
+  };
+
+  // Events exposed to parent component
+  useImperativeHandle(ref, () => ({
+    sendMessage: (message: SimMessage) => {
       const newMessage = new MessageObject(
-        sourceReplica.position,
-        destinationReplicaID,
-        message,
+        getReplicaPositionFromID(message.fromID),
+        message.toID,
+        message.content,
         () => {
           const index = messages.indexOf(newMessage);
           if (index > -1) {
@@ -91,38 +105,29 @@ export const Canvas = forwardRef<
             console.warn("Message not found in array during onDestroy:", message);
           }
 
-          newMessage.destoryKonvaNode();
+          newMessage.destroyKonvaNode();
         },
-        (replicaID: string) => {
-          const replica = replicas.get(replicaID);
-          return replica ? replica.position : null;
-        },
+        getReplicaPositionFromID,
       );
       addNewMessage(messages, newMessage);
     },
-    updateNumReplicas: (numReplicas: number) => {
-      if (numReplicas > replicas.size) {
-        for (let i = replicas.size; i < numReplicas; i++) {
-          const makeFault = Math.random() < 0.5;
-
-          addNewReplica(replicas, makeReplica(makeFault ? "adversary" : "default", onHoverReplica));
-        }
-      } else if (numReplicas < replicas.size) {
-        const replicasToRemove = Array.from(replicas.values()).slice(numReplicas);
-        replicasToRemove.forEach((replica) => {
-          if (replica.konvaNode) {
-            replica.konvaNode.destroy();
-          }
-        });
-
-        // Remove the replicas from the map
-        replicasToRemove.forEach((replica) => {
-          replicas.delete(replica.id);
-        });
-      }
+    changePhase: (phase: string) => {
+      phaseText.setText(`Phase: ${phase}`);
     },
-    updateNumFaults: (numFaults: number) => {
-      console.log("Updating number of faults to:", numFaults);
+    addNewReplica: (replica: SimReplica) => {
+      const newReplica = makeReplica(replica, onHoverReplica);
+      addNewReplica(replicas, newReplica);
+    },
+    removeReplica: (replicaID: string) => {
+      const replica = replicas.get(replicaID);
+      if (replica) {
+        if (replica.konvaNode) {
+          replica.konvaNode.destroy();
+        }
+        replicas.delete(replicaID);
+      } else {
+        console.warn("Attempted to remove non-existent replica with ID:", replicaID);
+      }
     },
   }));
 

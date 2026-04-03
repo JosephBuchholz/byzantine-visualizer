@@ -1,5 +1,6 @@
 import Konva from "konva";
 import type { Point } from "./types";
+import type { SimReplica } from "../simulation/simulationManager";
 
 export const REPLICA_SIZE = 100;
 
@@ -17,9 +18,9 @@ export default abstract class ReplicaObject {
   onHoverCallback?: (id: string) => void;
   onUnhoverCallback?: (id: string) => void;
 
-  constructor(type: ReplicaType, onHover?: (id: string) => void) {
-    this.id = crypto.randomUUID();
-    this.type = type;
+  constructor(simReplica: SimReplica, onHover?: (id: string) => void) {
+    this.id = simReplica.id;
+    this.type = simReplica.type;
     this.position = { x: 0.0, y: 0.0 };
     this.color = "primary";
     this.shape = "circle";

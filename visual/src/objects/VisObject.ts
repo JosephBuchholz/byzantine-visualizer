@@ -10,7 +10,7 @@ export default abstract class VisObject {
 
   addToLayer(layer: Konva.Layer | null) {}
 
-  destoryKonvaNode() {}
+  destroyKonvaNode() {}
 
   setPosition(position: Point) {
     this.position = clonePoint(position);
