@@ -56,14 +56,16 @@ export default abstract class ReplicaObject {
 
   initKonvaNode() {
     if (this.konvaNode) {
-      this.konvaNode.on("mouseover", () => {
+      const node = this.konvaNode as Konva.Node;
+
+      node.on("mouseover", () => {
         this.onHover();
         if (this.onHoverCallback) {
           this.onHoverCallback(this.id);
         }
       });
 
-      this.konvaNode.on("mouseleave", () => {
+      node.on("mouseleave", () => {
         this.onUnhover();
         if (this.onUnhoverCallback) {
           this.onUnhoverCallback(this.id);
