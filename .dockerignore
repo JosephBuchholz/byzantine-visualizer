@@ -1,0 +1,21 @@
+.git
+.gitignore
+.github
+
+# Dependencies and build artifacts
+**/node_modules
+**/dist
+**/.turbo
+**/.cache
+
+# Local/editor files
+.vscode
+.idea
+*.log
+*.tmp
+*.swp
+
+# OS junk
+.DS_Store
+Thumbs.db
+
