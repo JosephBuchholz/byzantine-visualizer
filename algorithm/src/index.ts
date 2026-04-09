@@ -3,6 +3,10 @@ import BasicHotStuffNode from "./hotstuff/basic.js";
 import type { FailState, HotStuffMessage, LogLevel } from "./types.js";
 import { InMemoryDataStore } from "./data/store.js";
 
+// Public surface for the simulator: defines the HotStuff node contract and exposes a helper to build
+// a configured BasicHotStuffNode with a fresh in-memory datastore.
+
+// Node-level tuning knobs that mirror the simulator's runtime behavior.
 export interface HotStuffConfig {
 	numNodes: number;
 	loopTimeoutMaxMs: number;
@@ -12,6 +16,7 @@ export interface HotStuffConfig {
 	logger?: (level: LogLevel, id: number, message: string) => void;
 }
 
+// Contract exposed to the rest of the simulator; implemented by BasicHotStuffNode.
 export interface HotStuffNode {
 	id: number;
 	config: HotStuffConfig;
@@ -60,12 +65,26 @@ export interface HotStuffNode {
 	abort(): Promise<Result<void, "NodeAlreadyAborted">>;
 }
 
+/**
+ * Fallback logger used when the caller does not provide one.
+ * Includes a timestamp and node id so protocol events are easy to correlate across replicas.
+ */
 function defaultLogger(level: LogLevel, id: number, message: string) {
 	const tag = `[${new Date().toISOString()}] Node ${id}`;
 	console.log(`${tag} ${level}: ${message}`);
 }
 
+/**
+ * Factory for creating a fully configured simulator node.
+ * Ensures every node has a logger and a fresh isolated in-memory datastore.
+ */
 export function defineNode(id: number, config: HotStuffConfig): HotStuffNode {
+	// If the caller did not provide a logger in the config, use defaultLogger as the fallback
 	config.logger ??= defaultLogger;
+
+	// Create and return a brand new HotStuff node with:
+	// - id: the node's unique identifier
+	// - config as Required<HotStuffConfig>: the fully complete config (logger is now guaranteed to exist)
+	// - new InMemoryDataStore(): a brand new empty data store for this node to use
 	return new BasicHotStuffNode(id, config as Required<HotStuffConfig>, new InMemoryDataStore());
 }
