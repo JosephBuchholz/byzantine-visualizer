@@ -83,7 +83,7 @@ describe("Basic HotStuff Algorithm", () => {
 		await node.dataStore.put("key1", "value1");
 
 		// Act
-		const value = await node.dataStore.get("key1");
+		const value = await node.read("key1");
 
 		// Assert
 		expect(value).toBe("value1");
