@@ -3,7 +3,12 @@ import { type HotStuffConfig } from "../src/index.js";
 import BasicHotStuffNode from "../src/hotstuff/basic.js";
 import { InMemoryDataStore } from "../src/data/store.js";
 import { Result } from "better-result";
-import { MessageKind } from "../src/types.js";
+import {
+	MessageKind,
+	type PreCommitMessage,
+	type PrepareMessage,
+	type QuorumCertificate,
+} from "../src/types.js";
 
 /** Build a minimal config used across tests to keep timing small and deterministic. */
 function createTestConfig(): Required<HotStuffConfig> {
@@ -29,6 +34,20 @@ function setLeaderState(node: BasicHotStuffNode) {
 		...node.replicaState,
 		pendingVotes: new Map(),
 		collectedNewViews: [],
+	};
+}
+
+/** Build a deterministic QC fixture for tests so messages can carry protocol-valid `justify` data. */
+function createQC(
+	nodeHash: string,
+	viewNumber: number,
+	type: MessageKind,
+): QuorumCertificate {
+	return {
+		type,
+		viewNumber,
+		nodeHash,
+		thresholdSig: `qc-${type}-${viewNumber}-${nodeHash}`,
 	};
 }
 
@@ -191,5 +210,166 @@ describe("Basic HotStuff Algorithm", () => {
 		expect(n3Message.type).toBe(MessageKind.Prepare);
 		expect(n3Message.viewNumber).toBe(0);
 		expect(n3Message.senderId).toBe(n1.id);
+	});
+
+	/**
+	 * Valid PREPARE messages should be accepted by followers.
+	 * Followers must update observed prepareQC/view and emit a PREPARE vote back to the leader.
+	 */
+	it("followers process valid PREPARE and vote back to leader", async () => {
+		// Arrange
+		const config = createTestConfig();
+		const [leader, follower, other] = [
+			createTestNode(0, config),
+			createTestNode(1, config),
+			createTestNode(2, config),
+		];
+
+		const justify = createQC("GENESIS", 1, MessageKind.NewView);
+		const prepareMessage: PrepareMessage = {
+			type: MessageKind.Prepare,
+			viewNumber: 2,
+			senderId: leader.id,
+			node: {
+				block: {
+					hash: "block-1",
+					parentHash: "GENESIS",
+					data: { writes: [] },
+					height: 1,
+				},
+				parentHash: "GENESIS",
+				justify,
+			},
+		};
+
+		follower.message(prepareMessage);
+
+		// Act
+		await follower.step([leader, follower, other]);
+
+		// Assert
+		expect(follower.replicaState.viewNumber).toBe(2);
+		expect(follower.replicaState.prepareQC).toEqual(justify);
+		expect(follower.replicaState.lockedQC).toBeNull();
+
+		expect(leader.messageQueue.length).toBe(1);
+		const vote = leader.messageQueue[0]!;
+		expect(vote.type).toBe(MessageKind.Vote);
+		if (vote.type === MessageKind.Vote) {
+			expect(vote.voteType).toBe(MessageKind.Prepare);
+			expect(vote.nodeHash).toBe("block-1");
+			expect(vote.senderId).toBe(follower.id);
+		}
+	});
+
+	/**
+	 * PREPARE messages with a malformed parent/justify relation must be rejected.
+	 * Followers should not emit votes for structurally invalid proposals.
+	 */
+	it("followers reject invalid PREPARE parent linkage", async () => {
+		// Arrange
+		const config = createTestConfig();
+		const [leader, follower, other] = [
+			createTestNode(0, config),
+			createTestNode(1, config),
+			createTestNode(2, config),
+		];
+
+		const badPrepareMessage: PrepareMessage = {
+			type: MessageKind.Prepare,
+			viewNumber: 2,
+			senderId: leader.id,
+			node: {
+				block: {
+					hash: "block-bad",
+					parentHash: "PARENT-A",
+					data: { writes: [] },
+					height: 1,
+				},
+				parentHash: "PARENT-A",
+				justify: createQC("PARENT-B", 1, MessageKind.NewView),
+			},
+		};
+
+		follower.message(badPrepareMessage);
+
+		// Act
+		await follower.step([leader, follower, other]);
+
+		// Assert
+		expect(leader.messageQueue.length).toBe(0);
+		expect(follower.replicaState.prepareQC).toBeNull();
+	});
+
+	/**
+	 * Valid PRE-COMMIT messages should update follower prepareQC and produce PRE-COMMIT votes.
+	 */
+	it("followers process valid PRE-COMMIT and vote back to leader", async () => {
+		// Arrange
+		const config = createTestConfig();
+		const [leader, follower, other] = [
+			createTestNode(0, config),
+			createTestNode(1, config),
+			createTestNode(2, config),
+		];
+
+		const prepareQC = createQC("block-2", 3, MessageKind.Prepare);
+		const preCommitMessage: PreCommitMessage = {
+			type: MessageKind.PreCommit,
+			viewNumber: 3,
+			senderId: leader.id,
+			nodeHash: "block-2",
+			justify: prepareQC,
+		};
+
+		follower.message(preCommitMessage);
+
+		// Act
+		await follower.step([leader, follower, other]);
+
+		// Assert
+		expect(follower.replicaState.viewNumber).toBe(3);
+		expect(follower.replicaState.prepareQC).toEqual(prepareQC);
+
+		expect(leader.messageQueue.length).toBe(1);
+		const vote = leader.messageQueue[0]!;
+		expect(vote.type).toBe(MessageKind.Vote);
+		if (vote.type === MessageKind.Vote) {
+			expect(vote.voteType).toBe(MessageKind.PreCommit);
+			expect(vote.nodeHash).toBe("block-2");
+			expect(vote.senderId).toBe(follower.id);
+		}
+	});
+
+	/**
+	 * PRE-COMMIT messages with mismatched QC/node hash must be rejected.
+	 * Followers should not update state or emit PRE-COMMIT votes.
+	 */
+	it("followers reject PRE-COMMIT when QC node hash mismatches", async () => {
+		// Arrange
+		const config = createTestConfig();
+		const [leader, follower, other] = [
+			createTestNode(0, config),
+			createTestNode(1, config),
+			createTestNode(2, config),
+		];
+
+		const badPreCommitMessage: PreCommitMessage = {
+			type: MessageKind.PreCommit,
+			viewNumber: 4,
+			senderId: leader.id,
+			nodeHash: "block-3",
+			justify: createQC("different-block", 4, MessageKind.Prepare),
+		};
+
+		follower.message(badPreCommitMessage);
+
+		// Act
+		await follower.step([leader, follower, other]);
+
+		// Assert
+		expect(leader.messageQueue.length).toBe(0);
+		expect(follower.replicaState.prepareQC).toBeNull();
+		expect(follower.replicaState.viewNumber).toBe(0);
 	});
 });
