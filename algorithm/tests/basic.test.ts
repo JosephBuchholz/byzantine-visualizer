@@ -38,11 +38,7 @@ function setLeaderState(node: BasicHotStuffNode) {
 }
 
 /** Build a deterministic QC fixture for tests so messages can carry protocol-valid `justify` data. */
-function createQC(
-	nodeHash: string,
-	viewNumber: number,
-	type: MessageKind,
-): QuorumCertificate {
+function createQC(nodeHash: string, viewNumber: number, type: MessageKind): QuorumCertificate {
 	return {
 		type,
 		viewNumber,
