@@ -10,6 +10,7 @@ import {
 	type PrepareMessage,
 	type QuorumCertificate,
 	type ReplicaState,
+	HotStuffAction,
 } from "../types.js";
 import { Result } from "better-result";
 
@@ -67,13 +68,14 @@ export default class BasicHotStuffNode implements HotStuffNode {
 	}
 
 	async abort(): Promise<Result<void, "NodeAlreadyAborted">> {
-		this.config.logger(LogLevel.Info, this.id, "Abort signal received.");
+		this.config.logger(LogLevel.Info, this.id, "Abort signal received.", HotStuffAction.None);
 
 		if (this.abortResolver) {
 			this.config.logger(
 				LogLevel.Warning,
 				this.id,
 				"Node is already aborting. Ignoring additional abort signal.",
+				HotStuffAction.None,
 			);
 			return Promise.resolve(Result.err("NodeAlreadyAborted"));
 		}
@@ -84,13 +86,14 @@ export default class BasicHotStuffNode implements HotStuffNode {
 	}
 
 	async pause(controller: Promise<void>): Promise<Result<void, "NodeAlreadyPaused">> {
-		this.config.logger(LogLevel.Info, this.id, "Pause signal received.");
+		this.config.logger(LogLevel.Info, this.id, "Pause signal received.", HotStuffAction.None);
 
 		if (this.pauseController) {
 			this.config.logger(
 				LogLevel.Warning,
 				this.id,
 				"Node is already paused. Ignoring additional pause signal.",
+				HotStuffAction.None,
 			);
 			return Promise.resolve(Result.err("NodeAlreadyPaused"));
 		}
@@ -114,7 +117,7 @@ export default class BasicHotStuffNode implements HotStuffNode {
 		}
 
 		if (this.isLeader(nodes)) {
-			this.log(LogLevel.Info, "Node is starting as leader.");
+			this.log(LogLevel.Info, "Node is starting as leader.", HotStuffAction.StartingAsLeader);
 			this.leaderState = {
 				...this.replicaState,
 				pendingVotes: new Map(),
@@ -189,6 +192,8 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			this.log(
 				LogLevel.Info,
 				`Forwarding ${this.pendingWrites.size} pending writes to leader (Node ${leader.id}).`,
+				HotStuffAction.SendMessage,
+				{ message: Array.from(this.pendingWrites.entries()), toId: leader.id },
 			);
 
 			// Forward pending writes to leader
@@ -241,6 +246,12 @@ export default class BasicHotStuffNode implements HotStuffNode {
 		let recipients = 0;
 		for (const node of nodes) {
 			if (node.id !== this.id) {
+				this.log(
+					LogLevel.Info,
+					`Sending prepare message to Node ${node.id}.`,
+					HotStuffAction.SendMessage,
+					{ message: prepareMessage, toId: node.id },
+				);
 				node.message(prepareMessage);
 				recipients++;
 			}
@@ -264,8 +275,13 @@ export default class BasicHotStuffNode implements HotStuffNode {
 		return this.id === this.findLeader(nodes).id;
 	}
 
-	private log(level: LogLevel, message: string) {
-		this.config.logger?.(level, this.id, message);
+	private log(
+		level: LogLevel,
+		message: string,
+		action: HotStuffAction = HotStuffAction.None,
+		data?: any,
+	) {
+		this.config.logger?.(level, this.id, message, action, data);
 	}
 }
 

@@ -1,27 +1,27 @@
 import Konva from "konva";
 import type { Point } from "./types";
 import type { SimReplica } from "../simulation/simulationManager";
+import VisObject from "./VisObject";
 
 export const REPLICA_SIZE = 100;
 
 export type ReplicaType = "default" | "leader" | "adversary";
 
-export default abstract class ReplicaObject {
+export default abstract class ReplicaObject extends VisObject {
   id: string;
-  position: Point;
   color: string;
   shape: "circle" | "leader" | "triangle";
   spin: boolean;
   angle: number;
   konvaNode: Konva.Shape | Konva.Group | null;
-  type: ReplicaType;
+  simReplica: SimReplica;
   onHoverCallback?: (id: string) => void;
   onUnhoverCallback?: (id: string) => void;
 
   constructor(simReplica: SimReplica, onHover?: (id: string) => void) {
+    super({ x: 0, y: 0 });
     this.id = simReplica.id;
-    this.type = simReplica.type;
-    this.position = { x: 0.0, y: 0.0 };
+    this.simReplica = simReplica;
     this.color = "primary";
     this.shape = "circle";
     this.spin = false;
@@ -71,6 +71,13 @@ export default abstract class ReplicaObject {
           this.onUnhoverCallback(this.id);
         }
       });
+    }
+  }
+
+  destroyKonvaNode(): void {
+    if (this.konvaNode) {
+      this.konvaNode.destroy();
+      this.konvaNode = null;
     }
   }
 

@@ -1,31 +1,107 @@
 import SimMessage, { CLIENT_ID } from "./SimMessage";
-
-export type ReplicaType = "default" | "leader" | "adversary";
+import BasicHotStuffNode from "../../../algorithm/src/hotstuff/basic.ts";
+import type { HotStuffConfig } from "../../../algorithm/src/index.ts";
+import { InMemoryDataStore } from "../../../algorithm/src/data/store.ts";
+import { HotStuffAction } from "../../../algorithm/src/types.ts";
 
 export class SimReplica {
   id: string;
-  type: ReplicaType;
+  isAdversary: boolean;
+  isLeader: boolean;
 
-  constructor(id: string, type: ReplicaType) {
+  constructor(id: string, isAdversary: boolean, isLeader: boolean) {
     this.id = id;
-    this.type = type;
+    this.isAdversary = isAdversary;
+    this.isLeader = isLeader;
   }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export default class SimulationManager {
   private onNewReplicaCallback: ((replica: SimReplica) => void) | null;
   private onRemoveReplicaCallback: ((replicaID: string) => void) | null;
+  private onUpdateReplicaCallback: ((replica: SimReplica) => void) | null;
   private onSendMessageCallback: ((message: SimMessage) => void) | null;
   private onPhaseChangeCallback: ((phase: string) => void) | null;
 
   private replicas: Map<string, SimReplica>;
 
+  private hotStuffConfig: Required<HotStuffConfig> = {
+    numNodes: 10,
+    loopTimeoutMaxMs: 100,
+    leaderTimeoutMaxMs: 100,
+    maxBatchSize: 10,
+    maxBatchWaitTimeMs: 100,
+    logger: this.hotStuffLogger.bind(this),
+  };
+
+  private nodes = new Map<string, BasicHotStuffNode>();
+
+  private messageIndex = 0;
+
   constructor() {
     this.onNewReplicaCallback = null;
     this.onRemoveReplicaCallback = null;
+    this.onUpdateReplicaCallback = null;
     this.onSendMessageCallback = null;
     this.onPhaseChangeCallback = null;
     this.replicas = new Map();
+    this.nodes = new Map();
+  }
+
+  async hotStuffLogger(level: string, id: number, message: string, action: HotStuffAction, data?: unknown) {
+    switch (action) {
+      case HotStuffAction.StartingAsLeader: {
+        this.onPhaseChangeCallback?.("Leader Elected");
+        const nodeID = this.getNodeIDByIndex(id);
+        if (!nodeID) {
+          console.warn(`Could not find node ID for index ${id}. Replica not updated in simulation.`);
+          return;
+        }
+
+        const replica = this.replicas.get(nodeID);
+        if (!replica) {
+          console.warn(`Could not find replica for node ID ${nodeID}. Replica not updated in simulation.`);
+          return;
+        }
+        replica.isLeader = true;
+
+        this.onUpdateReplicaCallback?.(replica);
+        break;
+      }
+      case HotStuffAction.SendMessage: {
+        const dataObj = data as { message: unknown; toId: number } | undefined;
+        if (!dataObj) {
+          console.warn("Failed to send message in simulation: data is undefined.");
+          return;
+        }
+
+        const fromId = this.getNodeIDByIndex(id);
+        const toId = this.getNodeIDByIndex(dataObj.toId);
+        if (!fromId || !toId) {
+          console.warn(`Failed to send message in simulation: fromId ${fromId}, toId ${toId}`);
+          return;
+        }
+
+        this.onSendMessage(new SimMessage(message, fromId, toId));
+
+        console.log("delaying");
+        await delay(3000);
+        console.log("done delaying");
+
+        break;
+      }
+    }
+  }
+
+  // Simulation events
+  onSendMessage(message: SimMessage) {
+    if (this.onSendMessageCallback) {
+      this.onSendMessageCallback(message);
+    }
   }
 
   // Simulation accessors
@@ -42,11 +118,25 @@ export default class SimulationManager {
   }
 
   // Simulation control methods
-  addNewReplica(type: ReplicaType) {
-    const newReplica = new SimReplica(crypto.randomUUID(), type);
-    this.replicas.set(newReplica.id, newReplica);
+  startSimulation() {
+    this.nodes.forEach((node) => {
+      node.run(this.getNodeArray());
+    });
+  }
+
+  addNewReplica(isAdversary: boolean, isLeader: boolean) {
+    const newID = `replica-${crypto.randomUUID()}`;
+
+    // Add HotStuff node
+    // TODO: change id to string and use newID
+    const newNode = new BasicHotStuffNode(this.nodes.size, this.hotStuffConfig, new InMemoryDataStore());
+    this.nodes.set(newID, newNode);
+
+    // Add sim replica
+    const newSimReplica = new SimReplica(newID, isAdversary, isLeader);
+    this.replicas.set(newSimReplica.id, newSimReplica);
     if (this.onNewReplicaCallback) {
-      this.onNewReplicaCallback(newReplica);
+      this.onNewReplicaCallback(newSimReplica);
     }
   }
 
@@ -72,7 +162,7 @@ export default class SimulationManager {
       for (let i = numReplicasInSim; i < numReplicas; i++) {
         const makeFault = Math.random() < 0.5;
 
-        this.addNewReplica(makeFault ? "adversary" : "default");
+        this.addNewReplica(makeFault ? true : false, false);
       }
     } else if (numReplicas < numReplicasInSim) {
       for (let i = numReplicasInSim; i > numReplicas; i--) {
@@ -82,6 +172,9 @@ export default class SimulationManager {
   }
 
   onSendClientMessage(message: string, toID: string) {
+    this.nodes.get(toID)?.put(this.messageIndex.toString(), message);
+    this.messageIndex++;
+
     if (this.onSendMessageCallback) {
       this.onSendMessageCallback(new SimMessage(message, CLIENT_ID, toID));
     }
@@ -106,11 +199,39 @@ export default class SimulationManager {
     this.onRemoveReplicaCallback = callback;
   }
 
+  setOnUpdateReplicaCallback(callback: (replica: SimReplica) => void) {
+    this.onUpdateReplicaCallback = callback;
+  }
+
   setOnSendMessageCallback(callback: (message: SimMessage) => void) {
     this.onSendMessageCallback = callback;
   }
 
   setOnPhaseChangeCallback(callback: (phase: string) => void) {
     this.onPhaseChangeCallback = callback;
+  }
+
+  // Other
+  getNodeArray(): BasicHotStuffNode[] {
+    return Array.from(this.nodes.values()).sort((a, b) => a.id - b.id);
+  }
+
+  getRandomNode(): BasicHotStuffNode | null {
+    const nodesArray = this.getNodeArray();
+    if (nodesArray.length === 0) {
+      return null;
+    }
+    const randomIndex = Math.floor(Math.random() * nodesArray.length);
+    return nodesArray[randomIndex];
+  }
+
+  getNodeIDByIndex(index: number): string | null {
+    for (const [nodeID, node] of this.nodes.entries()) {
+      if (node.id === index) {
+        return nodeID;
+      }
+    }
+
+    return null;
   }
 }

@@ -1,6 +1,6 @@
 import type { Result } from "better-result";
 import BasicHotStuffNode from "./hotstuff/basic.js";
-import type { FailState, HotStuffMessage, LogLevel } from "./types.js";
+import type { FailState, HotStuffAction, HotStuffMessage, LogLevel } from "./types.js";
 import { InMemoryDataStore } from "./data/store.js";
 
 export interface HotStuffConfig {
@@ -9,7 +9,13 @@ export interface HotStuffConfig {
 	leaderTimeoutMaxMs: number;
 	maxBatchSize: number;
 	maxBatchWaitTimeMs: number;
-	logger?: (level: LogLevel, id: number, message: string) => void;
+	logger?: (
+		level: LogLevel,
+		id: number,
+		message: string,
+		action: HotStuffAction,
+		data?: unknown,
+	) => void;
 }
 
 export interface HotStuffNode {
@@ -60,9 +66,15 @@ export interface HotStuffNode {
 	abort(): Promise<Result<void, "NodeAlreadyAborted">>;
 }
 
-function defaultLogger(level: LogLevel, id: number, message: string) {
+function defaultLogger(
+	level: LogLevel,
+	id: number,
+	message: string,
+	action: HotStuffAction,
+	data?: unknown,
+) {
 	const tag = `[${new Date().toISOString()}] Node ${id}`;
-	console.log(`${tag} ${level}: ${message}`);
+	console.log(`${tag} ${level}: ${message} (Action: ${action})`, data);
 }
 
 export function defineNode(id: number, config: HotStuffConfig): HotStuffNode {

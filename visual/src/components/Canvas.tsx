@@ -2,7 +2,7 @@ import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from "rea
 import Konva from "konva";
 import { useTheme } from "../hooks/useTheme";
 import ReplicaObject from "../objects/ReplicaObject";
-import makeReplica from "../objects/makeReplica";
+import makeReplica, { makeReplicaFromPrevious } from "../objects/makeReplica";
 import type { Point, StageObject } from "../objects/types";
 import MessageObject from "../objects/MessageObject";
 import type VisObject from "../objects/VisObject";
@@ -29,6 +29,7 @@ export interface CanvasHandle {
   changePhase: (phase: string) => void;
   addNewReplica: (replica: SimReplica) => void;
   removeReplica: (replicaID: string) => void;
+  updateReplica: (replica: SimReplica) => void;
 }
 
 export const Canvas = forwardRef<
@@ -128,6 +129,16 @@ export const Canvas = forwardRef<
       } else {
         console.warn("Attempted to remove non-existent replica with ID:", replicaID);
       }
+    },
+    updateReplica: (replica: SimReplica) => {
+      const oldReplica = replicas.get(replica.id)!;
+      replicas.set(replica.id, makeReplicaFromPrevious(replica, oldReplica, onHoverReplica));
+      oldReplica.destroyKonvaNode();
+      const newReplica = replicas.get(replica.id)!;
+      if (newReplica.konvaNode) {
+        stageRef.current?.getLayers()[0].add(newReplica.konvaNode);
+      }
+      newReplica.onUpdateColor(getColor);
     },
   }));
 

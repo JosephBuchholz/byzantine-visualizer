@@ -46,6 +46,15 @@ export default class LeaderReplica extends ReplicaObject {
     }
   }
 
+  // TODO: make rectangle rotate around its center:
+  /*onUpdate(deltaTime: number) {
+    super.onUpdate(deltaTime);
+
+    ...TODO
+    const konvaPosition = { x: this.position.x - REPLICA_SIZE / 2, y: this.position.y - REPLICA_SIZE / 2 };
+    this.konvaNode?.position(konvaPosition);
+  }*/
+
   onUpdateColor(getColor: (colorName: string) => string | undefined) {
     const newColor = getColor(this.color);
     if (this.konvaNode) {

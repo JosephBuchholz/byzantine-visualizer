@@ -100,3 +100,9 @@ export enum FailState {
 	NoNodesDefined,
 	NodeSizeConfigMismatch,
 }
+
+export enum HotStuffAction {
+	None,
+	StartingAsLeader,
+	SendMessage,
+}

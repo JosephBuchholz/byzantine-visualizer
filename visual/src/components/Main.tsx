@@ -31,6 +31,10 @@ export default function Main() {
       canvasRef.current?.removeReplica(replicaID);
     });
 
+    simManager.current.setOnUpdateReplicaCallback((replica: SimReplica) => {
+      canvasRef.current?.updateReplica(replica);
+    });
+
     simManager.current.setOnSendMessageCallback((message: SimMessage) => {
       canvasRef.current?.sendMessage(message);
     });
@@ -90,6 +94,10 @@ export default function Main() {
     }));
   };
 
+  const handleStartButtonPressed = () => {
+    simManager.current.startSimulation();
+  };
+
   // Canvas event handlers
   const onHoverReplica = (replica: ReplicaObject) => {
     setHoveredReplica(replica);
@@ -134,8 +142,17 @@ export default function Main() {
             handleSendMessage("Test");
           }}
         >
-          Test
+          Send Test Message
         </button>
+
+        <div className="mt-6">
+          <button
+            className="bg-primary text-text-on-primary font-primary font-semibold p-2 rounded-sm ml-2 hover:bg-primary-hover hover:cursor-pointer"
+            onClick={handleStartButtonPressed}
+          >
+            Start
+          </button>
+        </div>
 
         {hoveredReplica && (
           <>
@@ -143,7 +160,16 @@ export default function Main() {
             <hr className="border-accent border mx-2"></hr>
 
             <p className="text-text font-primary mx-2">ID: {hoveredReplica.id}</p>
-            <p className="text-text font-primary mx-2">Type: {hoveredReplica.type}</p>
+            <p className="text-text font-primary mx-2">
+              Type:{" "}
+              {hoveredReplica.simReplica.isLeader && hoveredReplica.simReplica.isAdversary
+                ? "Adversary Leader"
+                : hoveredReplica.simReplica.isLeader
+                  ? "Leader"
+                  : hoveredReplica.simReplica.isAdversary
+                    ? "Adversary"
+                    : "Standard Replica"}
+            </p>
           </>
         )}
       </Panel>
