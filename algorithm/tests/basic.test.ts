@@ -6,6 +6,7 @@ import { Result } from "better-result";
 import {
 	MessageKind,
 	type CommitMessage,
+	type DecideMessage,
 	type PreCommitMessage,
 	type PrepareMessage,
 	type QuorumCertificate,
@@ -520,5 +521,189 @@ describe("Basic HotStuff Algorithm", () => {
 			expect(onlyVote.nodeHash).toBe("block-commit-3-valid");
 			expect(onlyVote.senderId).toBe(follower.id);
 		}
+	});
+
+	/**
+	 * Verifies leader-side Decide phase entry.
+	 * How: once the leader gathers a COMMIT quorum for a node, it should aggregate a commitQC
+	 * and broadcast a DECIDE message to followers for the same node/view.
+	 */
+	it("leader broadcasts DECIDE after quorum COMMIT votes", async () => {
+		// Arrange
+		const config = createTestConfig();
+		const [leader, followerA, followerB] = [
+			createTestNode(0, config),
+			createTestNode(1, config),
+			createTestNode(2, config),
+		];
+		setLeaderState(leader);
+
+		const nodeHash = "block-decide-1";
+
+		// Act
+		leader.message({
+			type: MessageKind.Vote,
+			voteType: MessageKind.Commit,
+			nodeHash,
+			partialSig: `c-sig-${leader.id}-${nodeHash}`,
+			viewNumber: 9,
+			senderId: leader.id,
+		});
+		leader.message({
+			type: MessageKind.Vote,
+			voteType: MessageKind.Commit,
+			nodeHash,
+			partialSig: `c-sig-${followerA.id}-${nodeHash}`,
+			viewNumber: 9,
+			senderId: followerA.id,
+		});
+		leader.message({
+			type: MessageKind.Vote,
+			voteType: MessageKind.Commit,
+			nodeHash,
+			partialSig: `c-sig-${followerB.id}-${nodeHash}`,
+			viewNumber: 9,
+			senderId: followerB.id,
+		});
+
+		await leader.step([leader, followerA, followerB]);
+
+		// Assert
+		expect(followerA.messageQueue.length).toBe(1);
+		expect(followerB.messageQueue.length).toBe(1);
+
+		const toFollowerA = followerA.messageQueue[0]!;
+		expect(toFollowerA.type).toBe(MessageKind.Decide);
+		if (toFollowerA.type === MessageKind.Decide) {
+			expect(toFollowerA.nodeHash).toBe(nodeHash);
+			expect(toFollowerA.viewNumber).toBe(9);
+			expect(toFollowerA.justify.type).toBe(MessageKind.Commit);
+			expect(toFollowerA.justify.nodeHash).toBe(nodeHash);
+		}
+	});
+
+	/**
+	 * Valid DECIDE messages should finalize the block, execute its writes, and advance to the next view.
+	 * How: feed a follower a full phase-consistent sequence for one block and assert local execution state
+	 * after DECIDE (committed block recorded, writes applied, and view incremented).
+	 */
+	it("followers process valid DECIDE, execute writes, and advance view", async () => {
+		// Arrange
+		const config = createTestConfig();
+		const [leader, follower, other] = [
+			createTestNode(0, config),
+			createTestNode(1, config),
+			createTestNode(2, config),
+		];
+
+		await follower.dataStore.put("remove-me", "stale-value");
+
+		const nodeHash = "block-decide-2";
+		const prepareMessage: PrepareMessage = {
+			type: MessageKind.Prepare,
+			viewNumber: 9,
+			senderId: leader.id,
+			node: {
+				block: {
+					hash: nodeHash,
+					parentHash: "GENESIS",
+					data: {
+						writes: [
+							{ key: "decide-key", value: "decide-value" },
+							{ key: "remove-me", value: null },
+						],
+					},
+					height: 1,
+				},
+				parentHash: "GENESIS",
+				justify: createQC("GENESIS", 8, MessageKind.NewView),
+			},
+		};
+
+		const prepareQC = createQC(nodeHash, 9, MessageKind.Prepare);
+		const preCommitMessage: PreCommitMessage = {
+			type: MessageKind.PreCommit,
+			viewNumber: 9,
+			senderId: leader.id,
+			nodeHash,
+			justify: prepareQC,
+		};
+
+		const precommitQC = createQC(nodeHash, 9, MessageKind.PreCommit);
+		const commitMessage: CommitMessage = {
+			type: MessageKind.Commit,
+			viewNumber: 9,
+			senderId: leader.id,
+			nodeHash,
+			justify: precommitQC,
+		};
+
+		const decideMessage: DecideMessage = {
+			type: MessageKind.Decide,
+			viewNumber: 9,
+			senderId: leader.id,
+			nodeHash,
+			justify: createQC(nodeHash, 9, MessageKind.Commit),
+		};
+
+		follower.message(prepareMessage);
+		follower.message(preCommitMessage);
+		follower.message(commitMessage);
+		follower.message(decideMessage);
+
+		// Act
+		await follower.step([leader, follower, other]);
+
+		// Assert
+		expect(follower.replicaState.committedBlocks.map((block) => block.hash)).toContain(nodeHash);
+		expect(await follower.read("decide-key")).toBe("decide-value");
+		expect(await follower.read("remove-me")).toBeNull();
+		expect(follower.replicaState.viewNumber).toBe(10);
+	});
+
+	/**
+	 * DECIDE messages with malformed commitQC evidence must be rejected.
+	 * How: send a DECIDE whose QC certifies a different node hash and verify that the replica
+	 * actively rejects it (warning log) and performs no commit/execution side effects.
+	 */
+	it("followers reject DECIDE when QC node hash mismatches", async () => {
+		// Arrange
+		const logs: { level: string; id: number; message: string }[] = [];
+		const config = createTestConfig();
+		config.logger = (level, id, message) => {
+			logs.push({ level, id, message });
+		};
+		const [leader, follower, other] = [
+			createTestNode(0, config),
+			createTestNode(1, config),
+			createTestNode(2, config),
+		];
+
+		const badDecideMessage: DecideMessage = {
+			type: MessageKind.Decide,
+			viewNumber: 11,
+			senderId: leader.id,
+			nodeHash: "block-decide-3",
+			justify: createQC("different-block", 11, MessageKind.Commit),
+		};
+
+		follower.message(badDecideMessage);
+
+		// Act
+		await follower.step([leader, follower, other]);
+
+		// Assert
+		expect(follower.replicaState.committedBlocks).toHaveLength(0);
+		expect(follower.replicaState.viewNumber).toBe(0);
+		expect(
+			logs.some(
+				(log) =>
+					log.id === follower.id &&
+					log.level === "WARNING" &&
+					log.message.includes("Rejected DECIDE") &&
+					log.message.includes("QC mismatch"),
+			),
+		).toBe(true);
+		expect(await follower.read("block-decide-3")).toBeNull();
 	});
 });

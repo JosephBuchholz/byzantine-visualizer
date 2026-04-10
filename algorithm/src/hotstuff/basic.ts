@@ -8,6 +8,7 @@ import {
 	type LeaderState,
 	MessageKind,
 	type CommitMessage,
+	type DecideMessage,
 	type PrepareMessage,
 	type PreCommitMessage,
 	type QuorumCertificate,
@@ -33,6 +34,7 @@ export default class BasicHotStuffNode implements HotStuffNode {
 
 	messageQueue: HotStuffMessage[] = [];
 	pendingWrites: Map<string, string | null> = new Map();
+	knownBlocksByHash: Map<string, Block> = new Map();
 	lastWriteBatch: WriteBatch | null = null;
 	leaderState: LeaderState | null = null;
 
@@ -212,6 +214,10 @@ export default class BasicHotStuffNode implements HotStuffNode {
 					// Follower path: validate precommitQC, lock on it, and return a COMMIT vote.
 					await this.handleCommitMessage(message, nodes);
 					break;
+				case MessageKind.Decide:
+					// Follower path: validate commitQC, execute block writes, and finalize this view.
+					await this.handleDecideMessage(message);
+					break;
 				case MessageKind.Vote:
 					// Leader path: aggregate votes toward a QC and advance the phase when quorum forms.
 					await this.handleVoteMessage(message, nodes);
@@ -291,6 +297,9 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			data: blockData,
 			height: this.replicaState.committedBlocks.length + 1,
 		};
+
+		// Cache proposed blocks by hash so DECIDE can later execute their writes locally.
+		this.knownBlocksByHash.set(block.hash, block);
 
 		const prepareMessage: PrepareMessage = {
 			type: MessageKind.Prepare,
@@ -384,6 +393,8 @@ export default class BasicHotStuffNode implements HotStuffNode {
 		}
 
 		// Track the freshest view/QC we have observed for subsequent proposals.
+		// Also cache the proposed block so we can execute it if a DECIDE later arrives.
+		this.knownBlocksByHash.set(message.node.block.hash, message.node.block);
 		this.replicaState.viewNumber = Math.max(this.replicaState.viewNumber, message.viewNumber);
 		this.replicaState.prepareQC = message.node.justify;
 
@@ -487,6 +498,75 @@ export default class BasicHotStuffNode implements HotStuffNode {
 	}
 
 	/**
+	 * Replica path for DECIDE.
+	 * Verifies commitQC evidence, executes the decided block's write set, records it as committed,
+	 * and advances to the next view.
+	 */
+	private async handleDecideMessage(message: DecideMessage): Promise<void> {
+		// Reject malformed DECIDE evidence where the carried commitQC does not certify the target node.
+		if (
+			message.justify.nodeHash !== message.nodeHash ||
+			message.justify.type !== MessageKind.Commit
+		) {
+			this.log(LogLevel.Warning, `Rejected DECIDE for ${message.nodeHash}: QC mismatch.`);
+			return;
+		}
+
+		// Retrieve the block payload learned earlier during PREPARE so execution can apply writes.
+		const block = this.knownBlocksByHash.get(message.nodeHash);
+		if (!block) {
+			this.log(LogLevel.Warning, `Rejected DECIDE for ${message.nodeHash}: unknown block.`);
+			return;
+		}
+
+		// Ensure idempotent finalization: execute/append only once per block hash.
+		const alreadyCommitted = this.replicaState.committedBlocks.some((b) => b.hash === block.hash);
+		if (!alreadyCommitted) {
+			// Apply the decided block's write batch to local storage in order.
+			for (const write of this.extractWrites(block.data)) {
+				if (write.value === null) {
+					await this.dataStore.delete(write.key);
+					continue;
+				}
+				await this.dataStore.put(write.key, write.value);
+			}
+
+			this.replicaState.committedBlocks.push(block);
+		}
+
+		// DECIDE completes the view, so move to at least the next view.
+		this.replicaState.viewNumber = Math.max(this.replicaState.viewNumber, message.viewNumber) + 1;
+		this.log(
+			LogLevel.Info,
+			`Decided block ${message.nodeHash}; advanced to view ${this.replicaState.viewNumber}.`,
+		);
+	}
+
+	/**
+	 * Pull a write batch from opaque block data used by this simulator.
+	 * Returns an empty list when the payload shape is not recognized.
+	 */
+	private extractWrites(data: unknown): { key: string; value: string | null }[] {
+		if (!data || typeof data !== "object") {
+			return [];
+		}
+
+		const maybeWrites = (data as { writes?: unknown }).writes;
+		if (!Array.isArray(maybeWrites)) {
+			return [];
+		}
+
+		return maybeWrites.filter(
+			(write): write is { key: string; value: string | null } =>
+				typeof write === "object" &&
+				write !== null &&
+				typeof (write as { key?: unknown }).key === "string" &&
+				(typeof (write as { value?: unknown }).value === "string" ||
+					(write as { value?: unknown }).value === null),
+		);
+	}
+
+	/**
 	 * Leader aggregation path.
 	 * Collects votes by node hash, deduplicates by sender, forms a QC at quorum,
 	 * and currently advances from PREPARE quorum to PRE-COMMIT broadcast.
@@ -570,6 +650,29 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			}
 
 			this.log(LogLevel.Info, `Broadcast COMMIT for ${vote.nodeHash} with QC.`);
+			return;
+		}
+
+		// Phase transition: COMMIT quorum forms commitQC and triggers DECIDE broadcast.
+		if (vote.voteType === MessageKind.Commit) {
+			const decide: DecideMessage = {
+				type: MessageKind.Decide,
+				viewNumber: vote.viewNumber,
+				senderId: this.id,
+				nodeHash: vote.nodeHash,
+				justify: qc,
+			};
+
+			for (const node of nodes) {
+				if (node.id === this.id) {
+					// Leader also finalizes locally when commitQC is formed.
+					await this.handleDecideMessage(decide);
+					continue;
+				}
+				node.message(decide);
+			}
+
+			this.log(LogLevel.Info, `Broadcast DECIDE for ${vote.nodeHash} with QC.`);
 		}
 	}
 
