@@ -504,7 +504,10 @@ export default class BasicHotStuffNode implements HotStuffNode {
 	 */
 	private async handleDecideMessage(message: DecideMessage): Promise<void> {
 		// Reject malformed DECIDE evidence where the carried commitQC does not certify the target node.
-		if (message.justify.nodeHash !== message.nodeHash || message.justify.type !== MessageKind.Commit) {
+		if (
+			message.justify.nodeHash !== message.nodeHash ||
+			message.justify.type !== MessageKind.Commit
+		) {
 			this.log(LogLevel.Warning, `Rejected DECIDE for ${message.nodeHash}: QC mismatch.`);
 			return;
 		}
@@ -533,7 +536,10 @@ export default class BasicHotStuffNode implements HotStuffNode {
 
 		// DECIDE completes the view, so move to at least the next view.
 		this.replicaState.viewNumber = Math.max(this.replicaState.viewNumber, message.viewNumber) + 1;
-		this.log(LogLevel.Info, `Decided block ${message.nodeHash}; advanced to view ${this.replicaState.viewNumber}.`);
+		this.log(
+			LogLevel.Info,
+			`Decided block ${message.nodeHash}; advanced to view ${this.replicaState.viewNumber}.`,
+		);
 	}
 
 	/**
