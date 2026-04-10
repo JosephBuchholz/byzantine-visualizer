@@ -5,6 +5,7 @@ import { InMemoryDataStore } from "../src/data/store.js";
 import { Result } from "better-result";
 import {
 	MessageKind,
+	type CommitMessage,
 	type PreCommitMessage,
 	type PrepareMessage,
 	type QuorumCertificate,
@@ -367,5 +368,157 @@ describe("Basic HotStuff Algorithm", () => {
 		expect(leader.messageQueue.length).toBe(0);
 		expect(follower.replicaState.prepareQC).toBeNull();
 		expect(follower.replicaState.viewNumber).toBe(0);
+	});
+
+	/**
+	 * Verifies leader-side Commit phase entry.
+	 * How: once the leader has a PRE-COMMIT quorum for a node, it should aggregate a precommitQC
+	 * and broadcast a COMMIT message to replicas for that same node/view.
+	 */
+	it("leader broadcasts COMMIT after quorum PRE-COMMIT votes", async () => {
+		// Arrange
+		const config = createTestConfig();
+		const [leader, followerA, followerB] = [
+			createTestNode(0, config),
+			createTestNode(1, config),
+			createTestNode(2, config),
+		];
+		setLeaderState(leader);
+
+		const nodeHash = "block-commit-1";
+
+		// Act
+		leader.message({
+			type: MessageKind.Vote,
+			voteType: MessageKind.PreCommit,
+			nodeHash,
+			partialSig: `pc-sig-${leader.id}-${nodeHash}`,
+			viewNumber: 5,
+			senderId: leader.id,
+		});
+		leader.message({
+			type: MessageKind.Vote,
+			voteType: MessageKind.PreCommit,
+			nodeHash,
+			partialSig: `pc-sig-${followerA.id}-${nodeHash}`,
+			viewNumber: 5,
+			senderId: followerA.id,
+		});
+		leader.message({
+			type: MessageKind.Vote,
+			voteType: MessageKind.PreCommit,
+			nodeHash,
+			partialSig: `pc-sig-${followerB.id}-${nodeHash}`,
+			viewNumber: 5,
+			senderId: followerB.id,
+		});
+
+		await leader.step([leader, followerA, followerB]);
+
+		// Assert
+		expect(followerA.messageQueue.length).toBe(1);
+		expect(followerB.messageQueue.length).toBe(1);
+
+		const toFollowerA = followerA.messageQueue[0]!;
+		expect(toFollowerA.type).toBe(MessageKind.Commit);
+		if (toFollowerA.type === MessageKind.Commit) {
+			expect(toFollowerA.nodeHash).toBe(nodeHash);
+			expect(toFollowerA.viewNumber).toBe(5);
+			expect(toFollowerA.justify.type).toBe(MessageKind.PreCommit);
+			expect(toFollowerA.justify.nodeHash).toBe(nodeHash);
+		}
+	});
+
+	/**
+	 * Valid COMMIT messages should lock followers on the carried precommitQC and produce COMMIT votes.
+	 * How: feed a follower a COMMIT message with matching nodeHash/QC, run one step, then assert lock + vote.
+	 */
+	it("followers process valid COMMIT, lock on QC, and vote back to leader", async () => {
+		// Arrange
+		const config = createTestConfig();
+		const [leader, follower, other] = [
+			createTestNode(0, config),
+			createTestNode(1, config),
+			createTestNode(2, config),
+		];
+
+		const precommitQC = createQC("block-commit-2", 6, MessageKind.PreCommit);
+		const commitMessage: CommitMessage = {
+			type: MessageKind.Commit,
+			viewNumber: 6,
+			senderId: leader.id,
+			nodeHash: "block-commit-2",
+			justify: precommitQC,
+		};
+
+		follower.message(commitMessage);
+
+		// Act
+		await follower.step([leader, follower, other]);
+
+		// Assert
+		expect(follower.replicaState.viewNumber).toBe(6);
+		expect(follower.replicaState.lockedQC).toEqual(precommitQC);
+
+		expect(leader.messageQueue.length).toBe(1);
+		const vote = leader.messageQueue[0]!;
+		expect(vote.type).toBe(MessageKind.Vote);
+		if (vote.type === MessageKind.Vote) {
+			expect(vote.voteType).toBe(MessageKind.Commit);
+			expect(vote.nodeHash).toBe("block-commit-2");
+			expect(vote.senderId).toBe(follower.id);
+		}
+	});
+
+	/**
+	 * COMMIT messages with mismatched nodeHash and QC evidence must be rejected without corrupting lock state.
+	 * How: first establish lock state via a valid COMMIT, then send an invalid COMMIT and verify
+	 * lock/view stay anchored to the valid one and no extra COMMIT vote is emitted.
+	 */
+	it("followers reject COMMIT when QC node hash mismatches", async () => {
+		// Arrange
+		const config = createTestConfig();
+		const [leader, follower, other] = [
+			createTestNode(0, config),
+			createTestNode(1, config),
+			createTestNode(2, config),
+		];
+
+		const validQC = createQC("block-commit-3-valid", 7, MessageKind.PreCommit);
+		const validCommitMessage: CommitMessage = {
+			type: MessageKind.Commit,
+			viewNumber: 7,
+			senderId: leader.id,
+			nodeHash: "block-commit-3-valid",
+			justify: validQC,
+		};
+
+		const badCommitMessage: CommitMessage = {
+			type: MessageKind.Commit,
+			viewNumber: 8,
+			senderId: leader.id,
+			nodeHash: "block-commit-3",
+			justify: createQC("different-block", 8, MessageKind.PreCommit),
+		};
+
+		follower.message(validCommitMessage);
+		follower.message(badCommitMessage);
+
+		// Act
+		await follower.step([leader, follower, other]);
+		await follower.step([leader, follower, other]);
+
+		// Assert
+		expect(follower.replicaState.lockedQC).toEqual(validQC);
+		expect(follower.replicaState.viewNumber).toBe(7);
+
+		expect(leader.messageQueue.length).toBe(1);
+		const onlyVote = leader.messageQueue[0]!;
+		expect(onlyVote.type).toBe(MessageKind.Vote);
+		if (onlyVote.type === MessageKind.Vote) {
+			expect(onlyVote.voteType).toBe(MessageKind.Commit);
+			expect(onlyVote.nodeHash).toBe("block-commit-3-valid");
+			expect(onlyVote.senderId).toBe(follower.id);
+		}
 	});
 });
