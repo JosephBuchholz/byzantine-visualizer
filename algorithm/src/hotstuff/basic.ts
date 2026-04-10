@@ -7,6 +7,7 @@ import {
 	type HotStuffMessage,
 	type LeaderState,
 	MessageKind,
+	type CommitMessage,
 	type PrepareMessage,
 	type PreCommitMessage,
 	type QuorumCertificate,
@@ -192,6 +193,8 @@ export default class BasicHotStuffNode implements HotStuffNode {
 	 * 2) follower path: forward pending client operations to the current leader.
 	 */
 	async step(nodes: readonly Readonly<HotStuffNode>[]): Promise<void> {
+		// Process a stable snapshot of the current queue so messages enqueued during this step
+		// are handled in the next tick, preserving deterministic phase boundaries.
 		// Process every hot stuff message seen so far in the message queue
 		const hsMessageLength = this.messageQueue.length;
 		for (let i = 0; i < hsMessageLength; i++) {
@@ -204,6 +207,10 @@ export default class BasicHotStuffNode implements HotStuffNode {
 				case MessageKind.PreCommit:
 					// Follower path: accept leader's prepareQC and return a PRE-COMMIT vote.
 					await this.handlePreCommitMessage(message, nodes);
+					break;
+				case MessageKind.Commit:
+					// Follower path: validate precommitQC, lock on it, and return a COMMIT vote.
+					await this.handleCommitMessage(message, nodes);
 					break;
 				case MessageKind.Vote:
 					// Leader path: aggregate votes toward a QC and advance the phase when quorum forms.
@@ -411,15 +418,18 @@ export default class BasicHotStuffNode implements HotStuffNode {
 		message: PreCommitMessage,
 		nodes: readonly Readonly<HotStuffNode>[],
 	): Promise<void> {
+		// Reject malformed PRE-COMMIT evidence where the carried QC does not certify the target node.
 		if (message.justify.nodeHash !== message.nodeHash) {
 			this.log(LogLevel.Warning, `Rejected PRE-COMMIT for ${message.nodeHash}: QC mismatch.`);
 			return;
 		}
 
+		// Accept the PRE-COMMIT evidence as the highest known prepareQC and advance local view.
 		// Adopt the leader's prepareQC as our highest seen and advance view.
 		this.replicaState.prepareQC = message.justify;
 		this.replicaState.viewNumber = Math.max(this.replicaState.viewNumber, message.viewNumber);
 
+		// Emit a PRE-COMMIT vote back to the phase leader so it can aggregate a precommitQC.
 		const leader = this.findLeader(nodes);
 		const vote: VoteMessage = {
 			type: MessageKind.Vote,
@@ -438,6 +448,45 @@ export default class BasicHotStuffNode implements HotStuffNode {
 	}
 
 	/**
+	 * Replica path for COMMIT.
+	 * Verifies the precommitQC evidence, updates lock state, and returns a COMMIT vote to the leader.
+	 */
+	private async handleCommitMessage(
+		message: CommitMessage,
+		nodes: readonly Readonly<HotStuffNode>[],
+	): Promise<void> {
+		// Reject malformed COMMIT evidence where the carried QC does not certify the target node.
+		if (message.justify.nodeHash !== message.nodeHash) {
+			this.log(LogLevel.Warning, `Rejected COMMIT for ${message.nodeHash}: QC mismatch.`);
+			return;
+		}
+
+		// Lock on the validated precommitQC and move local view forward.
+		// This is the HotStuff lock update that preserves safety across view changes.
+		this.replicaState.lockedQC = message.justify;
+		this.replicaState.viewNumber = Math.max(this.replicaState.viewNumber, message.viewNumber);
+
+		// Return a COMMIT vote so the leader can aggregate a commitQC for the next phase.
+		const leader = this.findNodeById(nodes, message.senderId);
+		if (!leader) {
+			this.log(LogLevel.Error, `Cannot find leader ${message.senderId} to send COMMIT vote.`);
+			return;
+		}
+
+		const vote: VoteMessage = {
+			type: MessageKind.Vote,
+			voteType: MessageKind.Commit,
+			nodeHash: message.nodeHash,
+			partialSig: `c-sig-${this.id}-${message.nodeHash}`,
+			viewNumber: message.viewNumber,
+			senderId: this.id,
+		};
+
+		leader.message(vote);
+		this.log(LogLevel.Info, `Voted COMMIT for ${message.nodeHash} (view ${message.viewNumber}).`);
+	}
+
+	/**
 	 * Leader aggregation path.
 	 * Collects votes by node hash, deduplicates by sender, forms a QC at quorum,
 	 * and currently advances from PREPARE quorum to PRE-COMMIT broadcast.
@@ -446,17 +495,21 @@ export default class BasicHotStuffNode implements HotStuffNode {
 		vote: VoteMessage,
 		nodes: readonly Readonly<HotStuffNode>[],
 	): Promise<void> {
+		// Only the current leader aggregates votes into QCs and advances phases.
 		if (!this.leaderState) {
 			return; // Only the leader aggregates votes
 		}
 
-		const votesForNode = this.leaderState.pendingVotes.get(vote.nodeHash) ?? [];
+		// Keep vote buckets isolated by phase and node so PREPARE/PRE-COMMIT/COMMIT votes
+		// for the same block do not collide during duplicate checks and quorum counting.
+		const voteBucketKey = `${vote.voteType}:${vote.nodeHash}`;
+		const votesForNode = this.leaderState.pendingVotes.get(voteBucketKey) ?? [];
 		if (votesForNode.some((v) => v.senderId === vote.senderId)) {
 			return; // Ignore duplicates from the same sender
 		}
 
 		votesForNode.push(vote);
-		this.leaderState.pendingVotes.set(vote.nodeHash, votesForNode);
+		this.leaderState.pendingVotes.set(voteBucketKey, votesForNode);
 
 		if (votesForNode.length < this.quorumSize()) {
 			return; // Need more votes to form a QC
@@ -470,6 +523,7 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			thresholdSig: votesForNode.map((v) => v.partialSig).join("|"),
 		};
 
+		// Phase transition: PREPARE quorum forms prepareQC and triggers PRE-COMMIT broadcast.
 		if (vote.voteType === MessageKind.Prepare) {
 			this.replicaState.prepareQC = qc;
 			this.leaderState.prepareQC = qc;
@@ -493,6 +547,29 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			}
 
 			this.log(LogLevel.Info, `Broadcast PRE-COMMIT for ${vote.nodeHash} with QC.`);
+			return;
+		}
+
+		// Phase transition: PRE-COMMIT quorum forms precommitQC and triggers COMMIT broadcast.
+		if (vote.voteType === MessageKind.PreCommit) {
+			const commit: CommitMessage = {
+				type: MessageKind.Commit,
+				viewNumber: vote.viewNumber,
+				senderId: this.id,
+				nodeHash: vote.nodeHash,
+				justify: qc,
+			};
+
+			for (const node of nodes) {
+				if (node.id === this.id) {
+					// Leader participates in the COMMIT phase immediately.
+					await this.handleCommitMessage(commit, nodes);
+					continue;
+				}
+				node.message(commit);
+			}
+
+			this.log(LogLevel.Info, `Broadcast COMMIT for ${vote.nodeHash} with QC.`);
 		}
 	}
 
