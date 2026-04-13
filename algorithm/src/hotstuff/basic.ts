@@ -243,7 +243,7 @@ export default class BasicHotStuffNode implements HotStuffNode {
 		if (this.leaderState) {
 			// For view > 0, require NEW-VIEW quorum before proposing so leader has highQC evidence.
 			if (this.replicaState.viewNumber > 0) {
-				const hasNewViewQuorum = this.leaderState.collectedNewViews.length >= this.quorumSize();
+				const hasNewViewQuorum = this.newViewEvidenceCount() >= this.quorumSize();
 				if (!hasNewViewQuorum) {
 					this.maybeTimeoutToNextView(nodes, madeProgress);
 					return;
@@ -433,10 +433,15 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			this.leaderState.collectedNewViews = [];
 		}
 
-		const alreadySeen = this.leaderState.collectedNewViews.some(
+		// Keep one NEW-VIEW record per sender and retain the freshest QC evidence.
+		const existingIndex = this.leaderState.collectedNewViews.findIndex(
 			(collected) => collected.senderId === message.senderId,
 		);
-		if (alreadySeen) {
+		if (existingIndex >= 0) {
+			const existing = this.leaderState.collectedNewViews[existingIndex]!;
+			if (message.lockedQC.viewNumber > existing.lockedQC.viewNumber) {
+				this.leaderState.collectedNewViews[existingIndex] = message;
+			}
 			return;
 		}
 
@@ -448,11 +453,12 @@ export default class BasicHotStuffNode implements HotStuffNode {
 	 * This acts as the leader's highQC and anchors the next safe proposal.
 	 */
 	private selectHighQCFromNewViews(): QuorumCertificate | null {
-		if (!this.leaderState || this.leaderState.collectedNewViews.length === 0) {
+		if (!this.leaderState) {
 			return null;
 		}
 
-		let highest = this.leaderState.collectedNewViews[0]!.lockedQC;
+		// Start with leader-local QC evidence so self NEW-VIEW contributes to highQC selection.
+		let highest = this.replicaState.prepareQC ?? this.replicaState.lockedQC ?? genesisQC();
 		for (const message of this.leaderState.collectedNewViews) {
 			if (message.lockedQC.viewNumber > highest.viewNumber) {
 				highest = message.lockedQC;
@@ -460,6 +466,20 @@ export default class BasicHotStuffNode implements HotStuffNode {
 		}
 
 		return highest;
+	}
+
+	/**
+	 * Count NEW-VIEW evidence available to the leader for the current view.
+	 * Includes external collected messages plus leader-local evidence as one self-vote.
+	 */
+	private newViewEvidenceCount(): number {
+		if (!this.leaderState) {
+			return 0;
+		}
+
+		const hasSelfEvidence =
+			this.replicaState.prepareQC !== null || this.replicaState.lockedQC !== null;
+		return this.leaderState.collectedNewViews.length + (hasSelfEvidence ? 1 : 0);
 	}
 
 	/**
