@@ -38,6 +38,8 @@ export default class BasicHotStuffNode implements HotStuffNode {
 	knownBlocksByHash: Map<string, Block> = new Map();
 	lastWriteBatch: WriteBatch | null = null;
 	leaderState: LeaderState | null = null;
+	stepsWithoutProgress = 0;
+	lastNewViewSentForView: number | null = null;
 
 	abortResolver: (() => void) | null = null;
 	pauseController: Promise<void> | null = null;
@@ -196,10 +198,15 @@ export default class BasicHotStuffNode implements HotStuffNode {
 	 * 2) follower path: forward pending client operations to the current leader.
 	 */
 	async step(nodes: readonly Readonly<HotStuffNode>[]): Promise<void> {
+		let madeProgress = false;
+
 		// Process a stable snapshot of the current queue so messages enqueued during this step
 		// are handled in the next tick, preserving deterministic phase boundaries.
 		// Process every hot stuff message seen so far in the message queue
 		const hsMessageLength = this.messageQueue.length;
+		if (hsMessageLength > 0) {
+			madeProgress = true;
+		}
 		for (let i = 0; i < hsMessageLength; i++) {
 			const message = this.messageQueue.shift()!;
 			switch (message.type) {
@@ -221,7 +228,7 @@ export default class BasicHotStuffNode implements HotStuffNode {
 					break;
 				case MessageKind.Decide:
 					// Follower path: validate commitQC, execute block writes, and finalize this view.
-					await this.handleDecideMessage(message);
+					await this.handleDecideMessage(message, nodes);
 					break;
 				case MessageKind.Vote:
 					// Leader path: aggregate votes toward a QC and advance the phase when quorum forms.
@@ -238,6 +245,7 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			if (this.replicaState.viewNumber > 0) {
 				const hasNewViewQuorum = this.leaderState.collectedNewViews.length >= this.quorumSize();
 				if (!hasNewViewQuorum) {
+					this.maybeTimeoutToNextView(nodes, madeProgress);
 					return;
 				}
 
@@ -260,6 +268,7 @@ export default class BasicHotStuffNode implements HotStuffNode {
 					LogLevel.Info,
 					`Creating new proposal with ${this.pendingWrites.size} data store messages.`,
 				);
+				madeProgress = true;
 
 				// Move pending writes to lastWriteBatch
 				this.lastWriteBatch = {
@@ -271,6 +280,7 @@ export default class BasicHotStuffNode implements HotStuffNode {
 				this.propose(nodes);
 			}
 
+			this.maybeTimeoutToNextView(nodes, madeProgress);
 			return;
 		}
 
@@ -281,6 +291,7 @@ export default class BasicHotStuffNode implements HotStuffNode {
 				LogLevel.Info,
 				`Forwarding ${this.pendingWrites.size} pending writes to leader (Node ${leader.id}).`,
 			);
+			madeProgress = true;
 
 			// Forward pending writes to leader
 			for (const [key, value] of this.pendingWrites.entries()) {
@@ -289,6 +300,8 @@ export default class BasicHotStuffNode implements HotStuffNode {
 
 			this.pendingWrites.clear();
 		}
+
+		this.maybeTimeoutToNextView(nodes, madeProgress);
 	}
 
 	/** Leader-only: build a block from pending writes and broadcast a Prepare. */
@@ -369,6 +382,15 @@ export default class BasicHotStuffNode implements HotStuffNode {
 		return nodes[leaderIndex]!;
 	}
 
+	/** Deterministically pick the leader for an arbitrary target view. */
+	private findLeaderForView(
+		nodes: readonly Readonly<HotStuffNode>[],
+		viewNumber: number,
+	): Readonly<HotStuffNode> {
+		const leaderIndex = viewNumber % nodes.length;
+		return nodes[leaderIndex]!;
+	}
+
 	/** Convenience check: is this node the current leader? */
 	isLeader(nodes: readonly Readonly<HotStuffNode>[]): boolean {
 		return this.id === this.findLeader(nodes).id;
@@ -438,6 +460,79 @@ export default class BasicHotStuffNode implements HotStuffNode {
 		}
 
 		return highest;
+	}
+
+	/**
+	 * Transition helper used by completion and timeout paths.
+	 * Moves local state into a target view and emits a single NEW-VIEW message to that view's leader.
+	 */
+	private advanceToNextView(
+		nodes: readonly Readonly<HotStuffNode>[],
+		targetView: number,
+		reason: "completion" | "timeout",
+	): void {
+		const nextView = Math.max(targetView, this.replicaState.viewNumber + 1);
+		if (nextView <= this.replicaState.viewNumber) {
+			return;
+		}
+
+		this.replicaState.viewNumber = nextView;
+		if (this.leaderState) {
+			this.leaderState.viewNumber = nextView;
+			this.leaderState.pendingVotes.clear();
+			this.leaderState.collectedNewViews = [];
+		}
+
+		// Carry the highest local QC evidence into NEW-VIEW, falling back to genesis when empty.
+		const carriedQC = this.replicaState.prepareQC ?? this.replicaState.lockedQC ?? genesisQC();
+		const newView: NewViewMessage = {
+			type: MessageKind.NewView,
+			viewNumber: nextView,
+			senderId: this.id,
+			lockedQC: carriedQC,
+			partialSig: `nv-sig-${this.id}-${nextView}-${carriedQC.nodeHash}`,
+		};
+
+		// Send to the deterministic leader of the transitioned view.
+		const nextLeader = this.findLeaderForView(nodes, nextView);
+		if (nextLeader.id === this.id) {
+			this.handleNewViewMessage(newView);
+		} else {
+			nextLeader.message(newView);
+		}
+
+		this.lastNewViewSentForView = nextView;
+		this.stepsWithoutProgress = 0;
+		this.log(
+			LogLevel.Info,
+			`Transitioned to view ${nextView} via ${reason}; sent NEW-VIEW to leader ${nextLeader.id}.`,
+		);
+	}
+
+	/**
+	 * Timeout guard for liveness.
+	 * Tracks consecutive no-progress steps and triggers a single timeout-based view transition
+	 * per current view to avoid repeated NEW-VIEW spam.
+	 */
+	private maybeTimeoutToNextView(
+		nodes: readonly Readonly<HotStuffNode>[],
+		madeProgress: boolean,
+	): void {
+		if (madeProgress) {
+			this.stepsWithoutProgress = 0;
+			return;
+		}
+
+		this.stepsWithoutProgress += 1;
+		if (this.lastNewViewSentForView === this.replicaState.viewNumber) {
+			return;
+		}
+
+		if (this.stepsWithoutProgress <= this.config.leaderTimeoutMaxMs) {
+			return;
+		}
+
+		this.advanceToNextView(nodes, this.replicaState.viewNumber + 1, "timeout");
 	}
 
 	/**
@@ -612,7 +707,10 @@ export default class BasicHotStuffNode implements HotStuffNode {
 	 * Verifies commitQC evidence, reconstructs the unexecuted branch from last executed block to tip,
 	 * executes that branch in order, records newly committed blocks, and advances to the next view.
 	 */
-	private async handleDecideMessage(message: DecideMessage): Promise<void> {
+	private async handleDecideMessage(
+		message: DecideMessage,
+		nodes: readonly Readonly<HotStuffNode>[],
+	): Promise<void> {
 		// Reject malformed DECIDE evidence where the carried commitQC does not certify the target node.
 		if (
 			message.justify.nodeHash !== message.nodeHash ||
@@ -649,11 +747,11 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			this.replicaState.committedBlocks.push(block);
 		}
 
-		// DECIDE that executed new work completes the view, so move to at least the next view.
-		this.replicaState.viewNumber = Math.max(this.replicaState.viewNumber, message.viewNumber) + 1;
+		// Completion path: after executing committed work, explicitly transition and send NEW-VIEW.
+		this.advanceToNextView(nodes, message.viewNumber + 1, "completion");
 		this.log(
 			LogLevel.Info,
-			`Decided block ${message.nodeHash}; executed ${branchToExecute.length} block(s) and advanced to view ${this.replicaState.viewNumber}.`,
+			`Decided block ${message.nodeHash}; executed ${branchToExecute.length} block(s).`,
 		);
 	}
 
@@ -819,7 +917,7 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			for (const node of nodes) {
 				if (node.id === this.id) {
 					// Leader also finalizes locally when commitQC is formed.
-					await this.handleDecideMessage(decide);
+					await this.handleDecideMessage(decide, nodes);
 					continue;
 				}
 				node.message(decide);
