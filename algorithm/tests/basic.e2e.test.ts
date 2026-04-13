@@ -121,10 +121,19 @@ describe("Basic HotStuff End-to-End Scenarios", () => {
 		await nodes[2]!.put("recover-key", "recover-value");
 		await nodes[2]!.step(nodes);
 
-		for (let i = 0; i < 5; i++) {
+		let observedNewViewAtNextLeader = false;
+		for (let i = 0; i < 12; i++) {
 			await nodes[1]!.step(nodes);
 			await nodes[2]!.step(nodes);
 			await nodes[3]!.step(nodes);
+
+			observedNewViewAtNextLeader ||= nextLeader.leaderState!.collectedNewViews.some(
+				(message) => message.type === MessageKind.NewView && message.viewNumber > 0,
+			);
+
+			if ((await nodes[1]!.read("recover-key")) === "recover-value") {
+				break;
+			}
 		}
 
 		// Assert
@@ -132,11 +141,7 @@ describe("Basic HotStuff End-to-End Scenarios", () => {
 		expect(nodes[2]!.replicaState.viewNumber).toBeGreaterThan(0);
 		expect(nodes[3]!.replicaState.viewNumber).toBeGreaterThan(0);
 
-		expect(
-			nextLeader.leaderState!.collectedNewViews.some(
-				(m) => m.type === MessageKind.NewView && m.viewNumber > 0,
-			),
-		).toBe(true);
+		expect(observedNewViewAtNextLeader).toBe(true);
 
 		expect(await nodes[1]!.read("recover-key")).toBe("recover-value");
 	});

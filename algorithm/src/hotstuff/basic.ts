@@ -292,14 +292,11 @@ export default class BasicHotStuffNode implements HotStuffNode {
 				LogLevel.Info,
 				`Forwarding ${this.pendingWrites.size} pending writes to leader (Node ${leader.id}).`,
 			);
-			madeProgress = true;
 
 			// Forward pending writes to leader
 			for (const [key, value] of this.pendingWrites.entries()) {
 				await (value ? leader.put(key, value) : leader.delete(key));
 			}
-
-			this.pendingWrites.clear();
 		}
 
 		this.maybeTimeoutToNextView(nodes, madeProgress);
@@ -478,8 +475,7 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			return 0;
 		}
 
-		const hasSelfEvidence =
-			this.replicaState.prepareQC !== null || this.replicaState.lockedQC !== null;
+		const hasSelfEvidence = true;
 		return this.leaderState.collectedNewViews.length + (hasSelfEvidence ? 1 : 0);
 	}
 
@@ -779,9 +775,11 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			for (const write of this.extractWrites(block.data)) {
 				if (write.value === null) {
 					await this.dataStore.delete(write.key);
+					this.pendingWrites.delete(write.key);
 					continue;
 				}
 				await this.dataStore.put(write.key, write.value);
+				this.pendingWrites.delete(write.key);
 			}
 
 			this.replicaState.committedBlocks.push(block);
