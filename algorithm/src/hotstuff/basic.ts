@@ -368,6 +368,40 @@ export default class BasicHotStuffNode implements HotStuffNode {
 		return nodes.find((n) => n.id === nodeId) ?? null;
 	}
 
+	/**
+	 * Check whether a candidate block extends (is a descendant of) an ancestor hash.
+	 * This walks parent links through the maintained local block tree and returns false if
+	 * ancestry evidence is missing, preserving safety when local history is incomplete.
+	 */
+	private isBlockDescendantOf(candidate: Block, ancestorHash: string): boolean {
+		// Quick accept for direct parent linkage and self-equality.
+		if (candidate.hash === ancestorHash || candidate.parentHash === ancestorHash) {
+			return true;
+		}
+
+		// Traverse parent pointers until we either find the ancestor or lose proof.
+		const visited = new Set<string>();
+		let currentHash = candidate.parentHash;
+
+		while (true) {
+			if (visited.has(currentHash)) {
+				return false;
+			}
+			visited.add(currentHash);
+
+			if (currentHash === ancestorHash) {
+				return true;
+			}
+
+			const current = this.knownBlocksByHash.get(currentHash);
+			if (!current) {
+				return false;
+			}
+
+			currentHash = current.parentHash;
+		}
+	}
+
 	/** Replica path for PREPARE: validate safety, update local QC/view, and send a PREPARE vote. */
 	private async handlePrepareMessage(
 		message: PrepareMessage,
@@ -383,9 +417,13 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			return;
 		}
 
-		// SafeNode predicate (simplified): extend lock or justify is newer.
+		// SafeNode predicate: descendant of lock (safety) OR newer justify (liveness).
+		// The descendant check now uses full ancestry traversal over the maintained block tree
+		// rather than a one-hop parent equality check.
 		const locked = this.replicaState.lockedQC;
-		const isDescendantOfLock = locked ? message.node.parentHash === locked.nodeHash : true;
+		const isDescendantOfLock = locked
+			? this.isBlockDescendantOf(message.node.block, locked.nodeHash)
+			: true;
 		const justifyIsNewer = locked ? message.node.justify.viewNumber > locked.viewNumber : true;
 		if (!isDescendantOfLock && !justifyIsNewer) {
 			this.log(LogLevel.Warning, `Rejected PREPARE for ${message.node.block.hash}: not safe.`);
