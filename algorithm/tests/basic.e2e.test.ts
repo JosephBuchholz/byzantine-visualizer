@@ -274,9 +274,9 @@ describe("Basic HotStuff End-to-End Scenarios", () => {
 		await follower.step(nodes);
 
 		// Assert
-		expect(follower.replicaState.committedBlocks.filter((block) => block.hash === nodeHash)).toHaveLength(
-			1,
-		);
+		expect(
+			follower.replicaState.committedBlocks.filter((block) => block.hash === nodeHash),
+		).toHaveLength(1);
 		expect(await follower.read("idempotent-key")).toBe("value");
 		expect(follower.replicaState.viewNumber).toBe(10);
 	});
