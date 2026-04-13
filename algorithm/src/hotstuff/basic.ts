@@ -39,7 +39,8 @@ export default class BasicHotStuffNode implements HotStuffNode {
 	lastWriteBatch: WriteBatch | null = null;
 	leaderState: LeaderState | null = null;
 	stepsWithoutProgress = 0;
-	lastNewViewSentForView: number | null = null;
+	timeoutBackoffExponent = 0;
+	suppressTimeoutForView: number | null = null;
 
 	abortResolver: (() => void) | null = null;
 	pauseController: Promise<void> | null = null;
@@ -514,19 +515,35 @@ export default class BasicHotStuffNode implements HotStuffNode {
 		};
 
 		// Send to the deterministic leader of the transitioned view.
+		// Queueing even for self keeps the message path uniform and observable in tests.
 		const nextLeader = this.findLeaderForView(nodes, nextView);
-		if (nextLeader.id === this.id) {
-			this.handleNewViewMessage(newView);
+		nextLeader.message(newView);
+
+		// Timeout backoff grows only on timeout transitions and resets on completion.
+		if (reason === "timeout") {
+			this.timeoutBackoffExponent += 1;
+			this.suppressTimeoutForView = null;
 		} else {
-			nextLeader.message(newView);
+			this.timeoutBackoffExponent = 0;
+			// After a successful completion-driven transition, suppress immediate timeout churn
+			// in the just-entered view until some subsequent progress arrives.
+			this.suppressTimeoutForView = nextView;
 		}
 
-		this.lastNewViewSentForView = nextView;
 		this.stepsWithoutProgress = 0;
 		this.log(
 			LogLevel.Info,
 			`Transitioned to view ${nextView} via ${reason}; sent NEW-VIEW to leader ${nextLeader.id}.`,
 		);
+	}
+
+	/**
+	 * Compute the current timeout threshold in steps.
+	 * Uses exponential backoff: base * 2^k where k is the number of consecutive timeout transitions.
+	 */
+	private currentTimeoutThresholdSteps(): number {
+		const base = Math.max(1, this.config.leaderTimeoutMaxMs);
+		return base * 2 ** this.timeoutBackoffExponent;
 	}
 
 	/**
@@ -540,15 +557,18 @@ export default class BasicHotStuffNode implements HotStuffNode {
 	): void {
 		if (madeProgress) {
 			this.stepsWithoutProgress = 0;
+			// Any observed progress resets liveness timeout backoff pressure.
+			this.timeoutBackoffExponent = 0;
+			this.suppressTimeoutForView = null;
+			return;
+		}
+
+		if (this.suppressTimeoutForView === this.replicaState.viewNumber) {
 			return;
 		}
 
 		this.stepsWithoutProgress += 1;
-		if (this.lastNewViewSentForView === this.replicaState.viewNumber) {
-			return;
-		}
-
-		if (this.stepsWithoutProgress <= this.config.leaderTimeoutMaxMs) {
+		if (this.stepsWithoutProgress <= this.currentTimeoutThresholdSteps()) {
 			return;
 		}
 

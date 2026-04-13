@@ -73,6 +73,7 @@ describe("Basic HotStuff timeout/interrupt liveness", () => {
 	 * Verifies repeated timeouts re-broadcast NEW-VIEW for each successive leader change.
 	 * How: force two timeout transitions in a row with no progress and assert that each target leader
 	 * receives a NEW-VIEW for its corresponding view, proving per-view re-broadcast behavior.
+	 * With exponential backoff enabled (base=1), the second timeout requires a longer wait.
 	 */
 	it("repeated timeout interrupts re-broadcast NEW-VIEW for each new view", async () => {
 		// Arrange
@@ -93,6 +94,7 @@ describe("Basic HotStuff timeout/interrupt liveness", () => {
 		await n2.step(nodes);
 		await n2.step(nodes);
 		await n2.step(nodes);
+		await n2.step(nodes);
 
 		// Assert
 		expect(n2.replicaState.viewNumber).toBeGreaterThanOrEqual(5);
@@ -100,14 +102,18 @@ describe("Basic HotStuff timeout/interrupt liveness", () => {
 		const leaderForV4 = nodes[4 % nodes.length]!;
 		const newViewToV4 = leaderForV4.messageQueue.find(
 			(message): message is NewViewMessage =>
-				message.type === MessageKind.NewView && message.viewNumber === 4 && message.senderId === n2.id,
+				message.type === MessageKind.NewView &&
+				message.viewNumber === 4 &&
+				message.senderId === n2.id,
 		);
 		expect(newViewToV4).toBeDefined();
 
 		const leaderForV5 = nodes[5 % nodes.length]!;
 		const newViewToV5 = leaderForV5.messageQueue.find(
 			(message): message is NewViewMessage =>
-				message.type === MessageKind.NewView && message.viewNumber === 5 && message.senderId === n2.id,
+				message.type === MessageKind.NewView &&
+				message.viewNumber === 5 &&
+				message.senderId === n2.id,
 		);
 		expect(newViewToV5).toBeDefined();
 	});
