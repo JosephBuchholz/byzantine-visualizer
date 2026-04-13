@@ -9,6 +9,7 @@ import {
 	MessageKind,
 	type CommitMessage,
 	type DecideMessage,
+	type NewViewMessage,
 	type PrepareMessage,
 	type PreCommitMessage,
 	type QuorumCertificate,
@@ -202,6 +203,10 @@ export default class BasicHotStuffNode implements HotStuffNode {
 		for (let i = 0; i < hsMessageLength; i++) {
 			const message = this.messageQueue.shift()!;
 			switch (message.type) {
+				case MessageKind.NewView:
+					// Leader path: collect NEW-VIEW evidence for future proposal selection.
+					this.handleNewViewMessage(message);
+					break;
 				case MessageKind.Prepare:
 					// Follower path: validate proposal safety then reply with a PREPARE vote.
 					await this.handlePrepareMessage(message, nodes);
@@ -229,6 +234,21 @@ export default class BasicHotStuffNode implements HotStuffNode {
 		}
 
 		if (this.leaderState) {
+			// For view > 0, require NEW-VIEW quorum before proposing so leader has highQC evidence.
+			if (this.replicaState.viewNumber > 0) {
+				const hasNewViewQuorum = this.leaderState.collectedNewViews.length >= this.quorumSize();
+				if (!hasNewViewQuorum) {
+					return;
+				}
+
+				// Select the highest QC seen in NEW-VIEW messages and use it as prepare baseline.
+				const highQC = this.selectHighQCFromNewViews();
+				if (highQC) {
+					this.replicaState.prepareQC = highQC;
+					this.leaderState.prepareQC = highQC;
+				}
+			}
+
 			this.lastWriteBatch ??= { lastBatchTime: new Date(), writes: [] };
 
 			const elapsedSinceLastBatch = Date.now() - this.lastWriteBatch.lastBatchTime.getTime();
@@ -366,6 +386,58 @@ export default class BasicHotStuffNode implements HotStuffNode {
 		nodeId: number,
 	): Readonly<HotStuffNode> | null {
 		return nodes.find((n) => n.id === nodeId) ?? null;
+	}
+
+	/**
+	 * Leader-only NEW-VIEW intake.
+	 * Collects view-change evidence for the current view and deduplicates by sender
+	 * so one replica cannot inflate quorum counts.
+	 */
+	private handleNewViewMessage(message: NewViewMessage): void {
+		if (!this.leaderState) {
+			return;
+		}
+
+		// Ignore stale NEW-VIEW evidence from older views.
+		if (message.viewNumber < this.replicaState.viewNumber) {
+			return;
+		}
+
+		// If a newer view is observed, synchronize leader view state and restart collection
+		// for that target view so quorum accounting remains view-specific.
+		if (message.viewNumber > this.replicaState.viewNumber) {
+			this.replicaState.viewNumber = message.viewNumber;
+			this.leaderState.viewNumber = message.viewNumber;
+			this.leaderState.collectedNewViews = [];
+		}
+
+		const alreadySeen = this.leaderState.collectedNewViews.some(
+			(collected) => collected.senderId === message.senderId,
+		);
+		if (alreadySeen) {
+			return;
+		}
+
+		this.leaderState.collectedNewViews.push(message);
+	}
+
+	/**
+	 * Choose the highest QC carried by collected NEW-VIEW messages.
+	 * This acts as the leader's highQC and anchors the next safe proposal.
+	 */
+	private selectHighQCFromNewViews(): QuorumCertificate | null {
+		if (!this.leaderState || this.leaderState.collectedNewViews.length === 0) {
+			return null;
+		}
+
+		let highest = this.leaderState.collectedNewViews[0]!.lockedQC;
+		for (const message of this.leaderState.collectedNewViews) {
+			if (message.lockedQC.viewNumber > highest.viewNumber) {
+				highest = message.lockedQC;
+			}
+		}
+
+		return highest;
 	}
 
 	/**
