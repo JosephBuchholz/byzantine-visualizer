@@ -103,7 +103,10 @@ describe("Basic HotStuff End-to-End Scenarios", () => {
 	 */
 	it("view-change under faulty leader recovers progress in next view", async () => {
 		// Arrange
-		const config = createTestConfig(4);
+		const config = {
+			...createTestConfig(4),
+			leaderTimeoutMaxMs: 1,
+		};
 		const nodes = [
 			createTestNode(0, config),
 			createTestNode(1, config),
@@ -113,6 +116,7 @@ describe("Basic HotStuff End-to-End Scenarios", () => {
 
 		const faultyLeader = nodes[0]!;
 		const nextLeader = nodes[1]!;
+		setLeaderState(nextLeader);
 
 		await nodes[2]!.put("recover-key", "recover-value");
 		await nodes[2]!.step(nodes);
@@ -129,7 +133,9 @@ describe("Basic HotStuff End-to-End Scenarios", () => {
 		expect(nodes[3]!.replicaState.viewNumber).toBeGreaterThan(0);
 
 		expect(
-			nextLeader.messageQueue.some((m) => m.type === MessageKind.NewView && m.viewNumber > 0),
+			nextLeader.leaderState!.collectedNewViews.some(
+				(m) => m.type === MessageKind.NewView && m.viewNumber > 0,
+			),
 		).toBe(true);
 
 		expect(await nodes[1]!.read("recover-key")).toBe("recover-value");
