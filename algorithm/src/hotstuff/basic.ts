@@ -537,8 +537,8 @@ export default class BasicHotStuffNode implements HotStuffNode {
 
 	/**
 	 * Replica path for DECIDE.
-	 * Verifies commitQC evidence, executes the decided block's write set, records it as committed,
-	 * and advances to the next view.
+	 * Verifies commitQC evidence, reconstructs the unexecuted branch from last executed block to tip,
+	 * executes that branch in order, records newly committed blocks, and advances to the next view.
 	 */
 	private async handleDecideMessage(message: DecideMessage): Promise<void> {
 		// Reject malformed DECIDE evidence where the carried commitQC does not certify the target node.
@@ -550,17 +550,22 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			return;
 		}
 
-		// Retrieve the block payload learned earlier during PREPARE so execution can apply writes.
-		const block = this.knownBlocksByHash.get(message.nodeHash);
-		if (!block) {
+		// Build the exact suffix that still needs execution: from the first unexecuted ancestor
+		// to the decided tip. If ancestry cannot be proven locally, reject to avoid partial execution.
+		const branchToExecute = this.buildUnexecutedBranch(message.nodeHash);
+		if (!branchToExecute) {
 			this.log(LogLevel.Warning, `Rejected DECIDE for ${message.nodeHash}: unknown block.`);
 			return;
 		}
 
-		// Ensure idempotent finalization: execute/append only once per block hash.
-		const alreadyCommitted = this.replicaState.committedBlocks.some((b) => b.hash === block.hash);
-		if (!alreadyCommitted) {
-			// Apply the decided block's write batch to local storage in order.
+		if (branchToExecute.length === 0) {
+			// Idempotent replay: nothing new to execute, so do not mutate commit history or view.
+			this.log(LogLevel.Info, `Ignored duplicate DECIDE for ${message.nodeHash}.`);
+			return;
+		}
+
+		// Execute the branch in ancestor-to-tip order so state transitions are deterministic.
+		for (const block of branchToExecute) {
 			for (const write of this.extractWrites(block.data)) {
 				if (write.value === null) {
 					await this.dataStore.delete(write.key);
@@ -572,12 +577,50 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			this.replicaState.committedBlocks.push(block);
 		}
 
-		// DECIDE completes the view, so move to at least the next view.
+		// DECIDE that executed new work completes the view, so move to at least the next view.
 		this.replicaState.viewNumber = Math.max(this.replicaState.viewNumber, message.viewNumber) + 1;
 		this.log(
 			LogLevel.Info,
-			`Decided block ${message.nodeHash}; advanced to view ${this.replicaState.viewNumber}.`,
+			`Decided block ${message.nodeHash}; executed ${branchToExecute.length} block(s) and advanced to view ${this.replicaState.viewNumber}.`,
 		);
+	}
+
+	/**
+	 * Reconstruct the unexecuted branch ending at the decided tip.
+	 * Walks parent pointers from tip to the first already committed ancestor (or GENESIS),
+	 * returning the branch in execution order. Returns null if ancestry evidence is incomplete.
+	 */
+	private buildUnexecutedBranch(tipHash: string): Block[] | null {
+		const committedHashes = new Set(this.replicaState.committedBlocks.map((block) => block.hash));
+		const pathFromTip: Block[] = [];
+		const visited = new Set<string>();
+
+		let currentHash = tipHash;
+		while (true) {
+			if (committedHashes.has(currentHash)) {
+				break;
+			}
+
+			if (visited.has(currentHash)) {
+				return null;
+			}
+			visited.add(currentHash);
+
+			const current = this.knownBlocksByHash.get(currentHash);
+			if (!current) {
+				return null;
+			}
+
+			pathFromTip.push(current);
+
+			if (current.parentHash === "GENESIS") {
+				break;
+			}
+
+			currentHash = current.parentHash;
+		}
+
+		return pathFromTip.reverse();
 	}
 
 	/**
