@@ -680,6 +680,16 @@ export default class BasicHotStuffNode implements HotStuffNode {
 		message: PrepareMessage,
 		nodes: readonly Readonly<HotStuffNode>[],
 	): Promise<void> {
+		// Reject stale PREPARE messages from older views before any validation or state mutation.
+		// This preserves monotonic view progress and prevents delayed packets from rewinding safety state.
+		if (message.viewNumber < this.replicaState.viewNumber) {
+			this.log(
+				LogLevel.Warning,
+				`Rejected PREPARE for ${message.node.block.hash}: stale view ${message.viewNumber} < local ${this.replicaState.viewNumber}.`,
+			);
+			return;
+		}
+
 		// Enforce leader-per-view rule: only the deterministic leader for this view can propose.
 		if (
 			!this.isMessageFromExpectedLeader(
@@ -753,6 +763,16 @@ export default class BasicHotStuffNode implements HotStuffNode {
 		message: PreCommitMessage,
 		nodes: readonly Readonly<HotStuffNode>[],
 	): Promise<void> {
+		// Reject stale PRE-COMMIT messages from older views before touching prepareQC.
+		// Without this guard, delayed messages could overwrite newer prepare evidence.
+		if (message.viewNumber < this.replicaState.viewNumber) {
+			this.log(
+				LogLevel.Warning,
+				`Rejected PRE-COMMIT for ${message.nodeHash}: stale view ${message.viewNumber} < local ${this.replicaState.viewNumber}.`,
+			);
+			return;
+		}
+
 		// Enforce leader-per-view rule: PRE-COMMIT must come from current view leader.
 		if (
 			!this.isMessageFromExpectedLeader(
@@ -807,6 +827,16 @@ export default class BasicHotStuffNode implements HotStuffNode {
 		message: CommitMessage,
 		nodes: readonly Readonly<HotStuffNode>[],
 	): Promise<void> {
+		// Reject stale COMMIT messages from older views before touching lockedQC.
+		// This protects the lock from being replaced by delayed precommit evidence.
+		if (message.viewNumber < this.replicaState.viewNumber) {
+			this.log(
+				LogLevel.Warning,
+				`Rejected COMMIT for ${message.nodeHash}: stale view ${message.viewNumber} < local ${this.replicaState.viewNumber}.`,
+			);
+			return;
+		}
+
 		// Enforce leader-per-view rule: COMMIT must come from current view leader.
 		if (
 			!this.isMessageFromExpectedLeader(
@@ -860,6 +890,16 @@ export default class BasicHotStuffNode implements HotStuffNode {
 		message: DecideMessage,
 		nodes: readonly Readonly<HotStuffNode>[],
 	): Promise<void> {
+		// Reject stale DECIDE messages from older views before execution or view transition.
+		// This ensures finalized execution only follows the replica's current or newer view timeline.
+		if (message.viewNumber < this.replicaState.viewNumber) {
+			this.log(
+				LogLevel.Warning,
+				`Rejected DECIDE for ${message.nodeHash}: stale view ${message.viewNumber} < local ${this.replicaState.viewNumber}.`,
+			);
+			return;
+		}
+
 		// Enforce leader-per-view rule: DECIDE must come from current view leader.
 		if (
 			!this.isMessageFromExpectedLeader(
