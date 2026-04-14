@@ -298,7 +298,15 @@ export default class BasicHotStuffNode implements HotStuffNode {
 
 			// Forward pending writes to leader
 			for (const [key, value] of this.pendingWrites.entries()) {
-				await (value ? leader.put(key, value) : leader.delete(key));
+				// Forward semantics are based on explicit null, not truthiness.
+				// This preserves valid empty-string writes ("") as writes instead of misclassifying
+				// them as deletes, which keeps visualization state faithful to client intent.
+				if (value === null) {
+					await leader.delete(key);
+					continue;
+				}
+
+				await leader.put(key, value);
 			}
 
 			// Remove locally queued writes after forwarding to avoid duplicate re-forwarding
