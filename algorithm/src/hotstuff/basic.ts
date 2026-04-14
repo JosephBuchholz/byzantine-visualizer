@@ -367,7 +367,9 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			hash: blockHash(this.id, this.replicaState.viewNumber, parentHash, blockData),
 			parentHash,
 			data: blockData,
-			height: this.replicaState.committedBlocks.length + 1,
+			// Derive visual/tree height from the parent chain, not commit count.
+			// This keeps block geometry correct for uncommitted and forked branches.
+			height: this.computeChildHeightFromParent(parentHash),
 		};
 
 		// Cache proposed blocks by hash so DECIDE can later execute their writes locally.
@@ -410,6 +412,36 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			},
 			nodes,
 		);
+	}
+
+	/**
+	 * Compute the height for a newly proposed child block from its selected parent hash.
+	 *
+	 * Rules:
+	 * 1) If parent is GENESIS, this is the first layer and child height is 1.
+	 * 2) If parent exists locally, child height is parent.height + 1.
+	 * 3) If parent is unexpectedly missing, fall back to 1 to keep simulation progress
+	 *    safe while logging a warning for visibility.
+	 */
+	private computeChildHeightFromParent(parentHash: string): number {
+		// Genesis proposals always start the tree at height 1.
+		if (parentHash === "GENESIS") {
+			return 1;
+		}
+
+		// For non-genesis proposals, recover parent height from the known local block tree.
+		const parentBlock = this.knownBlocksByHash.get(parentHash);
+		if (parentBlock) {
+			return parentBlock.height + 1;
+		}
+
+		// Missing ancestry should be rare, but fallback avoids crashing the simulation loop.
+		// We still emit a warning so this state is discoverable during debugging/testing.
+		this.log(
+			LogLevel.Warning,
+			`Parent block ${parentHash} not found while proposing; defaulting child height to 1.`,
+		);
+		return 1;
 	}
 
 	/**
