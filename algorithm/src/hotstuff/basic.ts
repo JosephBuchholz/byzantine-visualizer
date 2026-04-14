@@ -41,6 +41,12 @@ export default class BasicHotStuffNode implements HotStuffNode {
 	stepsWithoutProgress = 0;
 	timeoutBackoffExponent = 0;
 	suppressTimeoutForView: number | null = null;
+	// vheight-style local voting memory: highest view this replica has voted PREPARE in.
+	// This enforces monotonic voting and blocks stale re-votes.
+	prepareVoteView = -1;
+	// Tracks which proposal hash this replica already voted for in prepareVoteView.
+	// This prevents conflicting votes inside the same view.
+	prepareVoteNodeHash: string | null = null;
 
 	abortResolver: (() => void) | null = null;
 	pauseController: Promise<void> | null = null;
@@ -693,6 +699,45 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			return;
 		}
 
+		// Reject stale PREPARE messages from older views than our current local view.
+		// This keeps local voting monotonic in time and avoids regressing protocol progress.
+		if (message.viewNumber < this.replicaState.viewNumber) {
+			this.log(
+				LogLevel.Warning,
+				`Rejected PREPARE for ${message.node.block.hash}: stale view ${message.viewNumber} < local ${this.replicaState.viewNumber}.`,
+			);
+			return;
+		}
+
+		// If we already voted in a newer view, never vote again for an older one.
+		// This is the core vheight-style monotonic guard across views.
+		if (message.viewNumber < this.prepareVoteView) {
+			this.log(
+				LogLevel.Warning,
+				`Rejected PREPARE for ${message.node.block.hash}: already voted in newer view ${this.prepareVoteView}.`,
+			);
+			return;
+		}
+
+		// If we already voted in this exact view:
+		// - same proposal hash: ignore duplicate delivery (idempotent)
+		// - different proposal hash: reject conflicting second vote
+		if (message.viewNumber === this.prepareVoteView) {
+			if (this.prepareVoteNodeHash === message.node.block.hash) {
+				this.log(
+					LogLevel.Info,
+					`Ignored duplicate PREPARE for ${message.node.block.hash} in view ${message.viewNumber}.`,
+				);
+				return;
+			}
+
+			this.log(
+				LogLevel.Warning,
+				`Rejected PREPARE for ${message.node.block.hash}: conflicting vote already cast for ${this.prepareVoteNodeHash} in view ${message.viewNumber}.`,
+			);
+			return;
+		}
+
 		// Structural validity: proposed node must directly extend the QC it justifies.
 		const extendsJustify = message.node.parentHash === message.node.justify.nodeHash;
 		if (!extendsJustify) {
@@ -736,6 +781,11 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			viewNumber: message.viewNumber,
 			senderId: this.id,
 		};
+
+		// Record the local PREPARE vote decision before sending.
+		// This prevents duplicate/conflicting votes if similar messages arrive immediately after.
+		this.prepareVoteView = message.viewNumber;
+		this.prepareVoteNodeHash = message.node.block.hash;
 
 		leader.message(vote);
 		this.log(
