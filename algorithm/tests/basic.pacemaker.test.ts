@@ -45,7 +45,7 @@ describe("Basic HotStuff pacemaker liveness orchestration", () => {
 	 * Verifies NEW-VIEW quorum accounting includes the leader's own local evidence.
 	 * How: in n=4 (quorum 3), provide only two external NEW-VIEW messages plus leader's local QC,
 	 * then trigger a beat (client command) and expect proposal to proceed.
-	 * This is expected to fail until self-evidence is counted in NEW-VIEW quorum processing.
+	 * This guards against regressions in leader self-evidence quorum accounting.
 	 */
 	it("leader can propose with n-f-1 external NEW-VIEW messages plus self evidence", async () => {
 		// Arrange
@@ -80,7 +80,7 @@ describe("Basic HotStuff pacemaker liveness orchestration", () => {
 
 		leader.message(nvFromN1);
 		leader.message(nvFromN2);
-		await leader.put("beat-key", "beat-value");
+		void leader.put("beat-key", "beat-value");
 
 		// Act
 		await leader.step(nodes);
@@ -95,7 +95,7 @@ describe("Basic HotStuff pacemaker liveness orchestration", () => {
 	 * Verifies onReceiveNewView is robust to repeated sender updates in the same view.
 	 * How: deliver two NEW-VIEW messages from the same sender where the second carries higher QC,
 	 * then assert the leader keeps the freshest evidence for highQC selection.
-	 * This is expected to fail until per-sender NEW-VIEW replacement/update logic is implemented.
+	 * This guards against regressions in per-sender NEW-VIEW evidence replacement logic.
 	 */
 	it("onReceiveNewView keeps highest evidence from repeated sender updates", async () => {
 		// Arrange
@@ -145,7 +145,7 @@ describe("Basic HotStuff pacemaker liveness orchestration", () => {
 		leader.message(newerFromN1);
 		leader.message(fromN2);
 		leader.message(fromN3);
-		await leader.put("carry-key", "carry-value");
+		void leader.put("carry-key", "carry-value");
 
 		// Act
 		await leader.step(nodes);
@@ -208,7 +208,7 @@ describe("Basic HotStuff pacemaker liveness orchestration", () => {
 		expect(n1.messageQueue.some((message) => message.type === MessageKind.Prepare)).toBe(false);
 
 		// Act (beat arrives)
-		await leader.put("beat", "value");
+		void leader.put("beat", "value");
 		await leader.step(nodes);
 
 		// Assert (proposal after beat, anchored to collected highQC)

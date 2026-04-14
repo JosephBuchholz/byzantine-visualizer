@@ -36,7 +36,7 @@ describe("Basic HotStuff ancestry safety semantics", () => {
 	 * Ensures the safety rule uses full descendant ancestry, not just one-hop parent equality.
 	 * How: lock a replica on an ancestor block, provide a proposal that is a grandchild of that
 	 * lock with non-newer justify, and verify the replica still accepts and votes PREPARE.
-	 * This is expected to fail until multi-hop descendant checking is implemented.
+	 * This guards against regressions in multi-hop descendant checking.
 	 */
 	it("accepts PREPARE when node is a multi-hop descendant of lockedQC", async () => {
 		// Arrange

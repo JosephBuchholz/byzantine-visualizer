@@ -50,6 +50,57 @@ function createQC(nodeHash: string, viewNumber: number, type: MessageKind): Quor
 
 describe("Basic HotStuff End-to-End Scenarios", () => {
 	/**
+	 * End-to-end lifecycle test for a client operation promise.
+	 * How: submit a write, verify the returned promise is pending before consensus finishes,
+	 * then drive one full 4-phase round and verify the same promise resolves after DECIDE.
+	 */
+	it("operation promise is pending first and resolves after DECIDE execution", async () => {
+		// Arrange
+		const config = createTestConfig(3);
+		const [leader, followerA, followerB] = [
+			createTestNode(0, config),
+			createTestNode(1, config),
+			createTestNode(2, config),
+		];
+		const nodes = [leader, followerA, followerB] as const;
+		setLeaderState(leader);
+
+		let settled = false;
+		const completionPromise = leader.put("lifecycle-key", "lifecycle-value").then(() => {
+			settled = true;
+		});
+
+		// Let microtasks flush, then verify the operation is still pending pre-DECIDE.
+		await Promise.resolve();
+		expect(settled).toBe(false);
+
+		// Act: drive one full Basic HotStuff round to DECIDE.
+		await leader.step(nodes);
+
+		await followerA.step(nodes);
+		await followerB.step(nodes);
+		await leader.step(nodes);
+
+		await followerA.step(nodes);
+		await followerB.step(nodes);
+		await leader.step(nodes);
+
+		await followerA.step(nodes);
+		await followerB.step(nodes);
+		await leader.step(nodes);
+
+		await followerA.step(nodes);
+		await followerB.step(nodes);
+		await completionPromise;
+
+		// Assert: promise resolves only once operation is committed/executed.
+		expect(settled).toBe(true);
+		expect(await leader.read("lifecycle-key")).toBe("lifecycle-value");
+		expect(await followerA.read("lifecycle-key")).toBe("lifecycle-value");
+		expect(await followerB.read("lifecycle-key")).toBe("lifecycle-value");
+	});
+
+	/**
 	 * End-to-end happy path for one full Basic HotStuff view.
 	 * How: drive all replicas through PREPARE -> PRE-COMMIT -> COMMIT -> DECIDE with step-by-step
 	 * message passing, then assert all replicas executed the decided write and finalized one block.
@@ -65,7 +116,7 @@ describe("Basic HotStuff End-to-End Scenarios", () => {
 		const nodes = [leader, followerA, followerB] as const;
 		setLeaderState(leader);
 
-		await leader.put("e2e-key", "e2e-value");
+		void leader.put("e2e-key", "e2e-value");
 
 		// Act
 		await leader.step(nodes);
@@ -99,7 +150,7 @@ describe("Basic HotStuff End-to-End Scenarios", () => {
 	 * View-change and liveness-recovery scenario under a slow/faulty leader.
 	 * How: keep view-0 leader inactive and only step non-leaders; correct Basic HotStuff behavior
 	 * should trigger timeout-driven nextView, NEW-VIEW messages to view-1 leader, then progress.
-	 * This is intentionally a TDD red test until timeout + NEW-VIEW processing is implemented.
+	 * This guards against regressions in timeout + NEW-VIEW recovery behavior.
 	 */
 	it("view-change under faulty leader recovers progress in next view", async () => {
 		// Arrange
@@ -121,8 +172,8 @@ describe("Basic HotStuff End-to-End Scenarios", () => {
 
 		// Model client broadcast semantics by submitting the same command to multiple correct replicas.
 		// This avoids relying on repeated follower re-forwarding to a faulty leader.
-		await nodes[1]!.put("recover-key", "recover-value");
-		await nodes[2]!.put("recover-key", "recover-value");
+		void nodes[1]!.put("recover-key", "recover-value");
+		void nodes[2]!.put("recover-key", "recover-value");
 		await nodes[2]!.step(nodes);
 
 		let observedNewViewAtNextLeader = false;
@@ -157,7 +208,7 @@ describe("Basic HotStuff End-to-End Scenarios", () => {
 	 * How: provide a new leader with multiple NEW-VIEW messages carrying different QCs and include a
 	 * replica that is locked on an older QC; the leader should choose highest QC, propose from it,
 	 * and the stale-locked replica should recover by accepting the higher-justify proposal.
-	 * This is intentionally a TDD red test until NEW-VIEW/highQC flow is implemented.
+	 * This guards against regressions in NEW-VIEW highQC carry-over behavior.
 	 */
 	it("highQC carry-over enables stale-lock recovery across views", async () => {
 		// Arrange
@@ -205,7 +256,7 @@ describe("Basic HotStuff End-to-End Scenarios", () => {
 		newLeader.message(newViewFromLeader);
 		newLeader.message(newViewFromReplicaA);
 		newLeader.message(newViewFromStaleReplica);
-		await newLeader.put("carry-over-key", "carry-over-value");
+		void newLeader.put("carry-over-key", "carry-over-value");
 
 		// Act
 		await newLeader.step(nodes);
@@ -228,7 +279,7 @@ describe("Basic HotStuff End-to-End Scenarios", () => {
 	 * How: deliver the same DECIDE twice for the same block and assert the second delivery does not
 	 * cause extra effects. Idempotency means applying the same operation repeatedly yields the same
 	 * resulting state as applying it once.
-	 * This is intentionally a TDD red test until duplicate DECIDE handling is fully idempotent.
+	 * This guards against regressions in duplicate DECIDE idempotency handling.
 	 */
 	it("repeated DECIDE is idempotent", async () => {
 		// Arrange

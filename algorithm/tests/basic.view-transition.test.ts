@@ -45,7 +45,7 @@ describe("Basic HotStuff view transition mechanics", () => {
 	 * How: drive a follower through a valid PREPARE -> PRE-COMMIT -> COMMIT -> DECIDE sequence,
 	 * then assert it increments view and emits a NEW-VIEW message to the deterministic next leader
 	 * carrying its highest known QC evidence.
-	 * This is expected to fail until explicit post-completion nextView signaling is implemented.
+	 * This guards against regressions in post-completion nextView signaling.
 	 */
 	it("after DECIDE, replica enters next view and sends NEW-VIEW to next leader", async () => {
 		// Arrange
@@ -123,7 +123,7 @@ describe("Basic HotStuff view transition mechanics", () => {
 	 * Verifies timeout-driven nextView transition and NEW-VIEW signaling.
 	 * How: keep a replica in a view with no progress and repeatedly tick step; expected behavior is
 	 * timeout interrupt, view increment, and NEW-VIEW send to the next view leader with qc evidence.
-	 * This is expected to fail until timeout/interrupt path and explicit nextView are implemented.
+	 * This guards against regressions in timeout/interrupt-driven nextView transitions.
 	 */
 	it("on timeout interrupt, replica enters next view and sends NEW-VIEW", async () => {
 		// Arrange
@@ -164,7 +164,7 @@ describe("Basic HotStuff view transition mechanics", () => {
 	 * Verifies nextView signaling is emitted once per transition, not repeatedly every tick.
 	 * How: trigger a completion-based transition and run extra steps in the same view state;
 	 * expected behavior is a single NEW-VIEW message for that transition to avoid network spam.
-	 * This is expected to fail until explicit transition bookkeeping is implemented.
+	 * This guards against regressions in one-message-per-transition bookkeeping.
 	 */
 	it("nextView emits one NEW-VIEW per transition", async () => {
 		// Arrange

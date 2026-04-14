@@ -156,7 +156,7 @@ describe("Basic HotStuff runtime leader rotation", () => {
 		expect(n0.findLeader(nodes).id).toBe(1);
 
 		// Act: old leader receives client write in view 1.
-		await n0.put("handoff-key", "handoff-value");
+		void n0.put("handoff-key", "handoff-value");
 		await n0.step(nodes);
 
 		// Assert: write is forwarded to new leader instead of being retained by old leader.
