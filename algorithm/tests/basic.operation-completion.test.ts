@@ -25,7 +25,9 @@ function createTestNode(id: number, config: Required<HotStuffConfig>): BasicHotS
  * leader proposes, followers vote each phase, leader aggregates and advances phases,
  * then followers process DECIDE.
  */
-async function driveOneFullRound(nodes: readonly [BasicHotStuffNode, BasicHotStuffNode, BasicHotStuffNode]) {
+async function driveOneFullRound(
+	nodes: readonly [BasicHotStuffNode, BasicHotStuffNode, BasicHotStuffNode],
+) {
 	const [leader, followerA, followerB] = nodes;
 
 	await leader.step(nodes);
