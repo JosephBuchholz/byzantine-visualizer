@@ -139,7 +139,7 @@ describe("Basic HotStuff committed-branch execution semantics", () => {
 	 * How: build a three-block chain A -> B -> C with distinct writes on each block and DECIDE C.
 	 * Expected behavior is that all three writes become visible and all three blocks are recorded
 	 * as executed/committed in branch order from ancestor to tip.
-	 * This is expected to fail until branch-from-last-executed semantics are implemented.
+	 * This guards against regressions in branch-from-last-executed semantics.
 	 */
 	it("DECIDE executes entire ancestor-to-tip branch on first commit", async () => {
 		// Arrange
@@ -198,7 +198,7 @@ describe("Basic HotStuff committed-branch execution semantics", () => {
 	 * Verifies execution progresses from last-executed block instead of re-running the whole chain.
 	 * How: pre-mark A and B as already committed/executed, then DECIDE D on A -> B -> C -> D.
 	 * Expected behavior is that only C and D are newly executed and appended to committed history.
-	 * This is expected to fail until last-executed tracking is implemented.
+	 * This guards against regressions in last-executed suffix tracking.
 	 */
 	it("DECIDE executes only the unexecuted suffix beyond last executed block", async () => {
 		// Arrange
@@ -274,7 +274,7 @@ describe("Basic HotStuff committed-branch execution semantics", () => {
 	 * How: provide only tip block C while its parent chain is missing from local tree, then DECIDE C.
 	 * Expected behavior is rejection (or no execution), since branch-from-last-executed cannot be
 	 * deterministically reconstructed; this prevents state divergence from partial branch execution.
-	 * This is expected to fail until full branch reconstruction checks are implemented.
+	 * This guards against regressions in full branch reconstruction checks.
 	 */
 	it("DECIDE does not execute tip when ancestor chain is missing", async () => {
 		// Arrange

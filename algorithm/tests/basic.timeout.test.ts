@@ -122,7 +122,7 @@ describe("Basic HotStuff timeout/interrupt liveness", () => {
 	 * Verifies exponential backoff behavior across consecutive failed views.
 	 * How: with base timeout = 1 step, trigger first timeout (to view+1), then run exactly two idle steps.
 	 * Under exponential backoff, second timeout should need a longer wait and must NOT fire yet.
-	 * This is expected to fail until timeout intervals grow after each failed view.
+	 * This guards against regressions in exponential timeout backoff across failed views.
 	 */
 	it("timeout threshold grows across consecutive failed views (exponential backoff)", async () => {
 		// Arrange

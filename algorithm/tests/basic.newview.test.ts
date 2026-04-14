@@ -45,7 +45,7 @@ describe("Basic HotStuff NEW-VIEW protocol processing", () => {
 	 * Verifies runtime NEW-VIEW handling in the step loop.
 	 * How: enqueue NEW-VIEW messages to the current leader and assert they are collected in
 	 * leader state (deduplicated by sender) for view-change processing.
-	 * This is expected to fail until NEW-VIEW handling is implemented in the message switch.
+	 * This guards against regressions in NEW-VIEW handling inside the step loop.
 	 */
 	it("leader collects NEW-VIEW messages in step loop", async () => {
 		// Arrange
@@ -101,7 +101,7 @@ describe("Basic HotStuff NEW-VIEW protocol processing", () => {
 	 * Verifies leaders do not propose before NEW-VIEW quorum is reached.
 	 * How: provide pending client work but no NEW-VIEW quorum, run one leader step, and assert no
 	 * PREPARE is broadcast yet.
-	 * This is expected to fail until proposal gating on n-f NEW-VIEW messages is implemented.
+	 * This guards against regressions in NEW-VIEW quorum gating before proposal.
 	 */
 	it("leader does not broadcast PREPARE before NEW-VIEW quorum", async () => {
 		// Arrange
@@ -132,7 +132,7 @@ describe("Basic HotStuff NEW-VIEW protocol processing", () => {
 	 * Verifies highQC selection once NEW-VIEW quorum is collected.
 	 * How: send quorum NEW-VIEW messages with different QC view numbers, then trigger leader
 	 * proposal and assert PREPARE.justify carries the highest-view QC among collected evidence.
-	 * This is expected to fail until highest-QC selection from NEW-VIEW collection is implemented.
+	 * This guards against regressions in highest-QC selection from NEW-VIEW evidence.
 	 */
 	it("leader selects highest QC from NEW-VIEW quorum when proposing", async () => {
 		// Arrange

@@ -150,7 +150,7 @@ describe("Basic HotStuff End-to-End Scenarios", () => {
 	 * View-change and liveness-recovery scenario under a slow/faulty leader.
 	 * How: keep view-0 leader inactive and only step non-leaders; correct Basic HotStuff behavior
 	 * should trigger timeout-driven nextView, NEW-VIEW messages to view-1 leader, then progress.
-	 * This is intentionally a TDD red test until timeout + NEW-VIEW processing is implemented.
+	 * This guards against regressions in timeout + NEW-VIEW recovery behavior.
 	 */
 	it("view-change under faulty leader recovers progress in next view", async () => {
 		// Arrange
@@ -208,7 +208,7 @@ describe("Basic HotStuff End-to-End Scenarios", () => {
 	 * How: provide a new leader with multiple NEW-VIEW messages carrying different QCs and include a
 	 * replica that is locked on an older QC; the leader should choose highest QC, propose from it,
 	 * and the stale-locked replica should recover by accepting the higher-justify proposal.
-	 * This is intentionally a TDD red test until NEW-VIEW/highQC flow is implemented.
+	 * This guards against regressions in NEW-VIEW highQC carry-over behavior.
 	 */
 	it("highQC carry-over enables stale-lock recovery across views", async () => {
 		// Arrange
@@ -279,7 +279,7 @@ describe("Basic HotStuff End-to-End Scenarios", () => {
 	 * How: deliver the same DECIDE twice for the same block and assert the second delivery does not
 	 * cause extra effects. Idempotency means applying the same operation repeatedly yields the same
 	 * resulting state as applying it once.
-	 * This is intentionally a TDD red test until duplicate DECIDE handling is fully idempotent.
+	 * This guards against regressions in duplicate DECIDE idempotency handling.
 	 */
 	it("repeated DECIDE is idempotent", async () => {
 		// Arrange
