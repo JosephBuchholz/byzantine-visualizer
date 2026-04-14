@@ -69,7 +69,8 @@ describe("Basic HotStuff ancestry safety semantics", () => {
 
 		const prepareMessage: PrepareMessage = {
 			type: MessageKind.Prepare,
-			viewNumber: 10,
+			// Use a view where node 0 is deterministic leader in n=3.
+			viewNumber: 9,
 			senderId: leader.id,
 			node: {
 				block: {
@@ -79,7 +80,7 @@ describe("Basic HotStuff ancestry safety semantics", () => {
 					height: 3,
 				},
 				parentHash: middleHash,
-				justify: createQC(middleHash, 10, MessageKind.Prepare),
+				justify: createQC(middleHash, 9, MessageKind.Prepare),
 			},
 		};
 

@@ -396,6 +396,32 @@ export default class BasicHotStuffNode implements HotStuffNode {
 		return nodes[leaderIndex]!;
 	}
 
+	/**
+	 * Validate that an incoming phase message was sent by the deterministic leader
+	 * for the message's view number.
+	 */
+	private isMessageFromExpectedLeader(
+		nodes: readonly Readonly<HotStuffNode>[],
+		viewNumber: number,
+		senderId: number,
+		phaseName: string,
+		nodeHash: string,
+	): boolean {
+		// Compute the only valid sender for this phase message from deterministic leadership.
+		const expectedLeader = this.findLeaderForView(nodes, viewNumber);
+
+		// Reject messages sent by non-leaders or stale leaders from prior views.
+		if (senderId !== expectedLeader.id) {
+			this.log(
+				LogLevel.Warning,
+				`Rejected ${phaseName} for ${nodeHash}: sender ${senderId} is not leader ${expectedLeader.id} for view ${viewNumber}.`,
+			);
+			return false;
+		}
+
+		return true;
+	}
+
 	/** Convenience check: is this node the current leader? */
 	isLeader(nodes: readonly Readonly<HotStuffNode>[]): boolean {
 		return this.id === this.findLeader(nodes).id;
@@ -654,6 +680,19 @@ export default class BasicHotStuffNode implements HotStuffNode {
 		message: PrepareMessage,
 		nodes: readonly Readonly<HotStuffNode>[],
 	): Promise<void> {
+		// Enforce leader-per-view rule: only the deterministic leader for this view can propose.
+		if (
+			!this.isMessageFromExpectedLeader(
+				nodes,
+				message.viewNumber,
+				message.senderId,
+				"PREPARE",
+				message.node.block.hash,
+			)
+		) {
+			return;
+		}
+
 		// Structural validity: proposed node must directly extend the QC it justifies.
 		const extendsJustify = message.node.parentHash === message.node.justify.nodeHash;
 		if (!extendsJustify) {
@@ -714,6 +753,19 @@ export default class BasicHotStuffNode implements HotStuffNode {
 		message: PreCommitMessage,
 		nodes: readonly Readonly<HotStuffNode>[],
 	): Promise<void> {
+		// Enforce leader-per-view rule: PRE-COMMIT must come from current view leader.
+		if (
+			!this.isMessageFromExpectedLeader(
+				nodes,
+				message.viewNumber,
+				message.senderId,
+				"PRE-COMMIT",
+				message.nodeHash,
+			)
+		) {
+			return;
+		}
+
 		// Reject malformed PRE-COMMIT evidence where the carried QC does not certify the target node.
 		if (message.justify.nodeHash !== message.nodeHash) {
 			this.log(LogLevel.Warning, `Rejected PRE-COMMIT for ${message.nodeHash}: QC mismatch.`);
@@ -725,8 +777,12 @@ export default class BasicHotStuffNode implements HotStuffNode {
 		this.replicaState.prepareQC = message.justify;
 		this.replicaState.viewNumber = Math.max(this.replicaState.viewNumber, message.viewNumber);
 
-		// Emit a PRE-COMMIT vote back to the phase leader so it can aggregate a precommitQC.
-		const leader = this.findLeader(nodes);
+		// Emit a PRE-COMMIT vote back to the validated phase leader from the incoming message.
+		const leader = this.findNodeById(nodes, message.senderId);
+		if (!leader) {
+			this.log(LogLevel.Error, `Cannot find leader ${message.senderId} to send PRE-COMMIT vote.`);
+			return;
+		}
 		const vote: VoteMessage = {
 			type: MessageKind.Vote,
 			voteType: MessageKind.PreCommit,
@@ -751,6 +807,19 @@ export default class BasicHotStuffNode implements HotStuffNode {
 		message: CommitMessage,
 		nodes: readonly Readonly<HotStuffNode>[],
 	): Promise<void> {
+		// Enforce leader-per-view rule: COMMIT must come from current view leader.
+		if (
+			!this.isMessageFromExpectedLeader(
+				nodes,
+				message.viewNumber,
+				message.senderId,
+				"COMMIT",
+				message.nodeHash,
+			)
+		) {
+			return;
+		}
+
 		// Reject malformed COMMIT evidence where the carried QC does not certify the target node.
 		if (message.justify.nodeHash !== message.nodeHash) {
 			this.log(LogLevel.Warning, `Rejected COMMIT for ${message.nodeHash}: QC mismatch.`);
@@ -791,6 +860,19 @@ export default class BasicHotStuffNode implements HotStuffNode {
 		message: DecideMessage,
 		nodes: readonly Readonly<HotStuffNode>[],
 	): Promise<void> {
+		// Enforce leader-per-view rule: DECIDE must come from current view leader.
+		if (
+			!this.isMessageFromExpectedLeader(
+				nodes,
+				message.viewNumber,
+				message.senderId,
+				"DECIDE",
+				message.nodeHash,
+			)
+		) {
+			return;
+		}
+
 		// Reject malformed DECIDE evidence where the carried commitQC does not certify the target node.
 		if (
 			message.justify.nodeHash !== message.nodeHash ||

@@ -227,7 +227,8 @@ describe("Basic HotStuff Algorithm", () => {
 		const prepareMessage: PrepareMessage = {
 			type: MessageKind.Prepare,
 			viewNumber: 2,
-			senderId: leader.id,
+			// In n=3, view 2 leader is node 2.
+			senderId: other.id,
 			node: {
 				block: {
 					hash: "block-1",
@@ -250,8 +251,8 @@ describe("Basic HotStuff Algorithm", () => {
 		expect(follower.replicaState.prepareQC).toEqual(justify);
 		expect(follower.replicaState.lockedQC).toBeNull();
 
-		expect(leader.messageQueue.length).toBe(1);
-		const vote = leader.messageQueue[0]!;
+		expect(other.messageQueue.length).toBe(1);
+		const vote = other.messageQueue[0]!;
 		expect(vote.type).toBe(MessageKind.Vote);
 		if (vote.type === MessageKind.Vote) {
 			expect(vote.voteType).toBe(MessageKind.Prepare);
@@ -485,10 +486,11 @@ describe("Basic HotStuff Algorithm", () => {
 			createTestNode(2, config),
 		];
 
-		const validQC = createQC("block-commit-3-valid", 7, MessageKind.PreCommit);
+		const validQC = createQC("block-commit-3-valid", 0, MessageKind.PreCommit);
 		const validCommitMessage: CommitMessage = {
 			type: MessageKind.Commit,
-			viewNumber: 7,
+			// Keep view at 0 so node 0 is the deterministic leader/sender.
+			viewNumber: 0,
 			senderId: leader.id,
 			nodeHash: "block-commit-3-valid",
 			justify: validQC,
@@ -496,10 +498,10 @@ describe("Basic HotStuff Algorithm", () => {
 
 		const badCommitMessage: CommitMessage = {
 			type: MessageKind.Commit,
-			viewNumber: 8,
+			viewNumber: 0,
 			senderId: leader.id,
 			nodeHash: "block-commit-3",
-			justify: createQC("different-block", 8, MessageKind.PreCommit),
+			justify: createQC("different-block", 0, MessageKind.PreCommit),
 		};
 
 		follower.message(validCommitMessage);
@@ -511,7 +513,7 @@ describe("Basic HotStuff Algorithm", () => {
 
 		// Assert
 		expect(follower.replicaState.lockedQC).toEqual(validQC);
-		expect(follower.replicaState.viewNumber).toBe(7);
+		expect(follower.replicaState.viewNumber).toBe(0);
 
 		expect(leader.messageQueue.length).toBe(1);
 		const onlyVote = leader.messageQueue[0]!;
@@ -681,10 +683,11 @@ describe("Basic HotStuff Algorithm", () => {
 
 		const badDecideMessage: DecideMessage = {
 			type: MessageKind.Decide,
-			viewNumber: 11,
+			// Keep view at 0 so rejection reason is QC mismatch, not wrong leader.
+			viewNumber: 0,
 			senderId: leader.id,
 			nodeHash: "block-decide-3",
-			justify: createQC("different-block", 11, MessageKind.Commit),
+			justify: createQC("different-block", 0, MessageKind.Commit),
 		};
 
 		follower.message(badDecideMessage);
