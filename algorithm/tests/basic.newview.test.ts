@@ -50,19 +50,23 @@ describe("Basic HotStuff NEW-VIEW protocol processing", () => {
 	it("leader collects NEW-VIEW messages in step loop", async () => {
 		// Arrange
 		const config = createTestConfig(4);
-		const [leader, n1, n2, n3] = [
+		const [n0, leader, n2, n3] = [
 			createTestNode(0, config),
 			createTestNode(1, config),
 			createTestNode(2, config),
 			createTestNode(3, config),
 		];
-		const nodes = [leader, n1, n2, n3] as const;
+		const nodes = [n0, leader, n2, n3] as const;
+
+		// Use view 1 so node 1 is the deterministic leader for this scenario.
+		leader.replicaState.viewNumber = 1;
 		setLeaderState(leader);
+		leader.leaderState!.viewNumber = 1;
 
 		const nv1: NewViewMessage = {
 			type: MessageKind.NewView,
 			viewNumber: 1,
-			senderId: n1.id,
+			senderId: n0.id,
 			lockedQC: createQC("block-a", 4, MessageKind.Prepare),
 			partialSig: "nv-sig-1",
 		};
@@ -88,7 +92,7 @@ describe("Basic HotStuff NEW-VIEW protocol processing", () => {
 		// Assert
 		expect(leader.leaderState).not.toBeNull();
 		expect(leader.leaderState!.collectedNewViews.map((message) => message.senderId)).toEqual([
-			n1.id,
+			n0.id,
 			n2.id,
 		]);
 	});
@@ -102,13 +106,13 @@ describe("Basic HotStuff NEW-VIEW protocol processing", () => {
 	it("leader does not broadcast PREPARE before NEW-VIEW quorum", async () => {
 		// Arrange
 		const config = createTestConfig(4);
-		const [leader, n1, n2, n3] = [
+		const [n0, leader, n2, n3] = [
 			createTestNode(0, config),
 			createTestNode(1, config),
 			createTestNode(2, config),
 			createTestNode(3, config),
 		];
-		const nodes = [leader, n1, n2, n3] as const;
+		const nodes = [n0, leader, n2, n3] as const;
 		setLeaderState(leader);
 
 		leader.replicaState.viewNumber = 1;
@@ -119,7 +123,7 @@ describe("Basic HotStuff NEW-VIEW protocol processing", () => {
 		await leader.step(nodes);
 
 		// Assert
-		expect(n1.messageQueue.some((m) => m.type === MessageKind.Prepare)).toBe(false);
+		expect(n0.messageQueue.some((m) => m.type === MessageKind.Prepare)).toBe(false);
 		expect(n2.messageQueue.some((m) => m.type === MessageKind.Prepare)).toBe(false);
 		expect(n3.messageQueue.some((m) => m.type === MessageKind.Prepare)).toBe(false);
 	});
@@ -133,13 +137,13 @@ describe("Basic HotStuff NEW-VIEW protocol processing", () => {
 	it("leader selects highest QC from NEW-VIEW quorum when proposing", async () => {
 		// Arrange
 		const config = createTestConfig(4);
-		const [leader, n1, n2, n3] = [
+		const [n0, leader, n2, n3] = [
 			createTestNode(0, config),
 			createTestNode(1, config),
 			createTestNode(2, config),
 			createTestNode(3, config),
 		];
-		const nodes = [leader, n1, n2, n3] as const;
+		const nodes = [n0, leader, n2, n3] as const;
 		setLeaderState(leader);
 
 		leader.replicaState.viewNumber = 1;
@@ -152,7 +156,7 @@ describe("Basic HotStuff NEW-VIEW protocol processing", () => {
 		const nv1: NewViewMessage = {
 			type: MessageKind.NewView,
 			viewNumber: 1,
-			senderId: n1.id,
+			senderId: n0.id,
 			lockedQC: lowQC,
 			partialSig: "nv-low",
 		};
@@ -180,7 +184,7 @@ describe("Basic HotStuff NEW-VIEW protocol processing", () => {
 		await leader.step(nodes);
 
 		// Assert
-		const prepareMessage = n1.messageQueue.find((message) => message.type === MessageKind.Prepare);
+		const prepareMessage = n0.messageQueue.find((message) => message.type === MessageKind.Prepare);
 		expect(prepareMessage).toBeDefined();
 		if (prepareMessage?.type === MessageKind.Prepare) {
 			expect(prepareMessage.node.justify.nodeHash).toBe(highQC.nodeHash);

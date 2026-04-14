@@ -50,13 +50,13 @@ describe("Basic HotStuff pacemaker liveness orchestration", () => {
 	it("leader can propose with n-f-1 external NEW-VIEW messages plus self evidence", async () => {
 		// Arrange
 		const config = createTestConfig(4);
-		const [leader, n1, n2, n3] = [
+		const [n0, n1, leader, n3] = [
 			createTestNode(0, config),
 			createTestNode(1, config),
 			createTestNode(2, config),
 			createTestNode(3, config),
 		];
-		const nodes = [leader, n1, n2, n3] as const;
+		const nodes = [n0, n1, leader, n3] as const;
 		setLeaderState(leader);
 
 		leader.replicaState.viewNumber = 2;
@@ -73,8 +73,8 @@ describe("Basic HotStuff pacemaker liveness orchestration", () => {
 		const nvFromN2: NewViewMessage = {
 			type: MessageKind.NewView,
 			viewNumber: 2,
-			senderId: n2.id,
-			lockedQC: createQC("n2-qc", 5, MessageKind.Prepare),
+			senderId: n0.id,
+			lockedQC: createQC("n0-qc", 5, MessageKind.Prepare),
 			partialSig: "nv-2",
 		};
 
@@ -86,8 +86,8 @@ describe("Basic HotStuff pacemaker liveness orchestration", () => {
 		await leader.step(nodes);
 
 		// Assert
+		expect(n0.messageQueue.some((m) => m.type === MessageKind.Prepare)).toBe(true);
 		expect(n1.messageQueue.some((m) => m.type === MessageKind.Prepare)).toBe(true);
-		expect(n2.messageQueue.some((m) => m.type === MessageKind.Prepare)).toBe(true);
 		expect(n3.messageQueue.some((m) => m.type === MessageKind.Prepare)).toBe(true);
 	});
 
@@ -100,13 +100,13 @@ describe("Basic HotStuff pacemaker liveness orchestration", () => {
 	it("onReceiveNewView keeps highest evidence from repeated sender updates", async () => {
 		// Arrange
 		const config = createTestConfig(4);
-		const [leader, n1, n2, n3] = [
+		const [n0, n1, n2, leader] = [
 			createTestNode(0, config),
 			createTestNode(1, config),
 			createTestNode(2, config),
 			createTestNode(3, config),
 		];
-		const nodes = [leader, n1, n2, n3] as const;
+		const nodes = [n0, n1, n2, leader] as const;
 		setLeaderState(leader);
 
 		leader.replicaState.viewNumber = 3;
@@ -136,9 +136,9 @@ describe("Basic HotStuff pacemaker liveness orchestration", () => {
 		const fromN3: NewViewMessage = {
 			type: MessageKind.NewView,
 			viewNumber: 3,
-			senderId: n3.id,
-			lockedQC: createQC("n3-low", 4, MessageKind.Prepare),
-			partialSig: "nv-n3",
+			senderId: n0.id,
+			lockedQC: createQC("n0-low", 4, MessageKind.Prepare),
+			partialSig: "nv-n0",
 		};
 
 		leader.message(olderFromN1);

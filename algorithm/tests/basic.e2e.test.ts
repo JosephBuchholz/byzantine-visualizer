@@ -116,8 +116,12 @@ describe("Basic HotStuff End-to-End Scenarios", () => {
 
 		const faultyLeader = nodes[0]!;
 		const nextLeader = nodes[1]!;
+		nextLeader.replicaState.viewNumber = 1;
 		setLeaderState(nextLeader);
 
+		// Model client broadcast semantics by submitting the same command to multiple correct replicas.
+		// This avoids relying on repeated follower re-forwarding to a faulty leader.
+		await nodes[1]!.put("recover-key", "recover-value");
 		await nodes[2]!.put("recover-key", "recover-value");
 		await nodes[2]!.step(nodes);
 
@@ -127,8 +131,10 @@ describe("Basic HotStuff End-to-End Scenarios", () => {
 			await nodes[2]!.step(nodes);
 			await nodes[3]!.step(nodes);
 
-			observedNewViewAtNextLeader ||= nextLeader.leaderState!.collectedNewViews.some(
-				(message) => message.type === MessageKind.NewView && message.viewNumber > 0,
+			observedNewViewAtNextLeader ||= Boolean(
+				nextLeader.leaderState?.collectedNewViews.some(
+					(message) => message.type === MessageKind.NewView && message.viewNumber > 0,
+				),
 			);
 
 			if ((await nodes[1]!.read("recover-key")) === "recover-value") {

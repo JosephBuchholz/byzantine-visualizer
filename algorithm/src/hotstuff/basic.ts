@@ -156,14 +156,9 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			return Result.err(FailState.NodeSizeConfigMismatch);
 		}
 
-		if (this.isLeader(nodes)) {
-			this.log(LogLevel.Info, "Node is starting as leader.");
-			this.leaderState = {
-				...this.replicaState,
-				pendingVotes: new Map(),
-				collectedNewViews: [],
-			};
-		}
+		// Initialize role based on the current view before entering the run loop.
+		// This keeps startup behavior aligned with the deterministic leader function.
+		this.syncLeaderRole(nodes);
 
 		while (!this.abortResolver) {
 			// Check for pause signal
@@ -199,6 +194,10 @@ export default class BasicHotStuffNode implements HotStuffNode {
 	 * 2) follower path: forward pending client operations to the current leader.
 	 */
 	async step(nodes: readonly Readonly<HotStuffNode>[]): Promise<void> {
+		// Re-evaluate leader/follower role at the start of every step.
+		// This ensures leadership tracks view changes over time, not just startup.
+		this.syncLeaderRole(nodes);
+
 		let madeProgress = false;
 
 		// Process a stable snapshot of the current queue so messages enqueued during this step
@@ -240,6 +239,10 @@ export default class BasicHotStuffNode implements HotStuffNode {
 					break;
 			}
 		}
+
+		// Messages handled above may have changed this node's view (e.g., DECIDE or timeout).
+		// Re-sync role again so the remainder of this step uses the correct leader/follower path.
+		this.syncLeaderRole(nodes);
 
 		if (this.leaderState) {
 			// For view > 0, require NEW-VIEW quorum before proposing so leader has highQC evidence.
@@ -297,6 +300,10 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			for (const [key, value] of this.pendingWrites.entries()) {
 				await (value ? leader.put(key, value) : leader.delete(key));
 			}
+
+			// Remove locally queued writes after forwarding to avoid duplicate re-forwarding
+			// on subsequent idle steps in the same view.
+			this.pendingWrites.clear();
 		}
 
 		this.maybeTimeoutToNextView(nodes, madeProgress);
@@ -392,6 +399,43 @@ export default class BasicHotStuffNode implements HotStuffNode {
 	/** Convenience check: is this node the current leader? */
 	isLeader(nodes: readonly Readonly<HotStuffNode>[]): boolean {
 		return this.id === this.findLeader(nodes).id;
+	}
+
+	/**
+	 * Keep leader-only runtime state synchronized with deterministic leadership.
+	 * - If this node is the current view leader, ensure leader state exists.
+	 * - If this node is not the leader, drop leader-only state and act as follower.
+	 */
+	private syncLeaderRole(nodes: readonly Readonly<HotStuffNode>[]): void {
+		const shouldBeLeader = this.isLeader(nodes);
+
+		if (shouldBeLeader) {
+			if (this.leaderState) {
+				// Keep mirrored leader view aligned with replica view as views advance.
+				this.leaderState.viewNumber = this.replicaState.viewNumber;
+				return;
+			}
+
+			// Promote this node into leader mode for the current view.
+			this.leaderState = {
+				...this.replicaState,
+				pendingVotes: new Map(),
+				collectedNewViews: [],
+			};
+			this.log(LogLevel.Info, `Became leader for view ${this.replicaState.viewNumber}.`);
+			return;
+		}
+
+		if (!this.leaderState) {
+			return;
+		}
+
+		// Demote this node when it no longer matches the deterministic view leader.
+		this.leaderState = null;
+		this.log(
+			LogLevel.Info,
+			`Stepped down from leader role at view ${this.replicaState.viewNumber}.`,
+		);
 	}
 
 	/** Compute the 2f+1 quorum threshold for vote aggregation. */
