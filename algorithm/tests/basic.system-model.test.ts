@@ -75,8 +75,11 @@ describe("Basic HotStuff system-model preconditions (TDD)", () => {
 				expect(result.isErr()).toBe(true);
 			}
 
-			// Defensive cleanup for pre-fix behavior if run unexpectedly keeps looping.
-			await runner.abort().catch(() => {});
+			// Cleanup only when the timeout path occurred, which indicates the run loop
+			// is likely still active and needs an explicit abort signal.
+			if (result === "timeout") {
+				await runner.abort().catch(() => {});
+			}
 		}
 	});
 
