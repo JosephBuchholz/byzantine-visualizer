@@ -50,6 +50,57 @@ function createQC(nodeHash: string, viewNumber: number, type: MessageKind): Quor
 
 describe("Basic HotStuff End-to-End Scenarios", () => {
 	/**
+	 * End-to-end lifecycle test for a client operation promise.
+	 * How: submit a write, verify the returned promise is pending before consensus finishes,
+	 * then drive one full 4-phase round and verify the same promise resolves after DECIDE.
+	 */
+	it("operation promise is pending first and resolves after DECIDE execution", async () => {
+		// Arrange
+		const config = createTestConfig(3);
+		const [leader, followerA, followerB] = [
+			createTestNode(0, config),
+			createTestNode(1, config),
+			createTestNode(2, config),
+		];
+		const nodes = [leader, followerA, followerB] as const;
+		setLeaderState(leader);
+
+		let settled = false;
+		const completionPromise = leader.put("lifecycle-key", "lifecycle-value").then(() => {
+			settled = true;
+		});
+
+		// Let microtasks flush, then verify the operation is still pending pre-DECIDE.
+		await Promise.resolve();
+		expect(settled).toBe(false);
+
+		// Act: drive one full Basic HotStuff round to DECIDE.
+		await leader.step(nodes);
+
+		await followerA.step(nodes);
+		await followerB.step(nodes);
+		await leader.step(nodes);
+
+		await followerA.step(nodes);
+		await followerB.step(nodes);
+		await leader.step(nodes);
+
+		await followerA.step(nodes);
+		await followerB.step(nodes);
+		await leader.step(nodes);
+
+		await followerA.step(nodes);
+		await followerB.step(nodes);
+		await completionPromise;
+
+		// Assert: promise resolves only once operation is committed/executed.
+		expect(settled).toBe(true);
+		expect(await leader.read("lifecycle-key")).toBe("lifecycle-value");
+		expect(await followerA.read("lifecycle-key")).toBe("lifecycle-value");
+		expect(await followerB.read("lifecycle-key")).toBe("lifecycle-value");
+	});
+
+	/**
 	 * End-to-end happy path for one full Basic HotStuff view.
 	 * How: drive all replicas through PREPARE -> PRE-COMMIT -> COMMIT -> DECIDE with step-by-step
 	 * message passing, then assert all replicas executed the decided write and finalized one block.
