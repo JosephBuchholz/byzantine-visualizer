@@ -224,4 +224,155 @@ describe("Basic HotStuff stale-view phase rejection", () => {
 		expect(follower.replicaState.committedBlocks).toHaveLength(0);
 		expect(await follower.read("stale-decide-key")).toBeNull();
 	});
+
+	/**
+	 * What this test validates:
+	 * Once a replica has already advanced to a newer view and prepareQC, an old PRE-COMMIT
+	 * cannot roll prepareQC back to stale evidence.
+	 *
+	 * How it validates it:
+	 * 1) Seed replica with a newer view and a newer prepareQC (representing progressed state).
+	 * 2) Deliver an old PRE-COMMIT that is otherwise QC-consistent.
+	 * 3) Assert newer prepareQC is preserved and no stale vote is emitted.
+	 */
+	it("stale PRE-COMMIT cannot roll back prepareQC after view advancement", async () => {
+		// Arrange
+		const config = createTestConfig(4);
+		const [follower, n1, staleViewLeader, n3] = [
+			createTestNode(0, config),
+			createTestNode(1, config),
+			createTestNode(2, config),
+			createTestNode(3, config),
+		];
+		const nodes = [follower, n1, staleViewLeader, n3] as const;
+
+		// Represent an already-advanced local state.
+		follower.replicaState.viewNumber = 11;
+		const advancedPrepareQC = createQC("advanced-prepare", 11, MessageKind.Prepare);
+		follower.replicaState.prepareQC = advancedPrepareQC;
+
+		const stalePreCommit: PreCommitMessage = {
+			type: MessageKind.PreCommit,
+			viewNumber: 2,
+			senderId: staleViewLeader.id,
+			nodeHash: "stale-precommit-rollback",
+			justify: createQC("stale-precommit-rollback", 2, MessageKind.Prepare),
+		};
+
+		follower.message(stalePreCommit);
+
+		// Act
+		await follower.step(nodes);
+
+		// Assert
+		expect(follower.replicaState.viewNumber).toBe(11);
+		expect(follower.replicaState.prepareQC).toEqual(advancedPrepareQC);
+		expect(staleViewLeader.messageQueue.length).toBe(0);
+	});
+
+	/**
+	 * What this test validates:
+	 * Once a replica has already advanced to a newer view and lock, an old COMMIT cannot
+	 * overwrite lockedQC with stale precommit evidence.
+	 *
+	 * How it validates it:
+	 * 1) Seed replica with advanced view + lockedQC.
+	 * 2) Deliver stale-view COMMIT that would otherwise be accepted.
+	 * 3) Assert lock remains anchored to newer QC and no stale COMMIT vote is emitted.
+	 */
+	it("stale COMMIT cannot overwrite lockedQC after view advancement", async () => {
+		// Arrange
+		const config = createTestConfig(4);
+		const [follower, n1, staleViewLeader, n3] = [
+			createTestNode(0, config),
+			createTestNode(1, config),
+			createTestNode(2, config),
+			createTestNode(3, config),
+		];
+		const nodes = [follower, n1, staleViewLeader, n3] as const;
+
+		// Represent an already-advanced local state.
+		follower.replicaState.viewNumber = 12;
+		const advancedLockQC = createQC("advanced-lock", 12, MessageKind.PreCommit);
+		follower.replicaState.lockedQC = advancedLockQC;
+
+		const staleCommit: CommitMessage = {
+			type: MessageKind.Commit,
+			viewNumber: 2,
+			senderId: staleViewLeader.id,
+			nodeHash: "stale-commit-rollback",
+			justify: createQC("stale-commit-rollback", 2, MessageKind.PreCommit),
+		};
+
+		follower.message(staleCommit);
+
+		// Act
+		await follower.step(nodes);
+
+		// Assert
+		expect(follower.replicaState.viewNumber).toBe(12);
+		expect(follower.replicaState.lockedQC).toEqual(advancedLockQC);
+		expect(staleViewLeader.messageQueue.length).toBe(0);
+	});
+
+	/**
+	 * What this test validates:
+	 * After a replica has already advanced and committed newer history, a stale DECIDE cannot
+	 * append old blocks, execute old writes, or rewind the view timeline.
+	 *
+	 * How it validates it:
+	 * 1) Seed replica with advanced view and one already-committed block.
+	 * 2) Deliver an older DECIDE for a different historical block.
+	 * 3) Assert commit history length/content, datastore, and view all remain unchanged.
+	 */
+	it("stale DECIDE cannot append old commits or execute old writes after view advancement", async () => {
+		// Arrange
+		const config = createTestConfig(4);
+		const [follower, n1, staleViewLeader, n3] = [
+			createTestNode(0, config),
+			createTestNode(1, config),
+			createTestNode(2, config),
+			createTestNode(3, config),
+		];
+		const nodes = [follower, n1, staleViewLeader, n3] as const;
+
+		const alreadyCommitted = {
+			hash: "advanced-committed",
+			parentHash: "GENESIS",
+			data: { writes: [{ key: "advanced-key", value: "advanced-value" }] },
+			height: 1,
+		};
+		follower.replicaState.committedBlocks.push(alreadyCommitted);
+		follower.knownBlocksByHash.set(alreadyCommitted.hash, alreadyCommitted);
+		await follower.dataStore.put("advanced-key", "advanced-value");
+		follower.replicaState.viewNumber = 13;
+
+		follower.knownBlocksByHash.set("old-decide-block", {
+			hash: "old-decide-block",
+			parentHash: "GENESIS",
+			data: { writes: [{ key: "old-key", value: "old-value" }] },
+			height: 1,
+		});
+
+		const staleDecide: DecideMessage = {
+			type: MessageKind.Decide,
+			viewNumber: 2,
+			senderId: staleViewLeader.id,
+			nodeHash: "old-decide-block",
+			justify: createQC("old-decide-block", 2, MessageKind.Commit),
+		};
+
+		follower.message(staleDecide);
+
+		// Act
+		await follower.step(nodes);
+
+		// Assert
+		expect(follower.replicaState.viewNumber).toBe(13);
+		expect(follower.replicaState.committedBlocks.map((block) => block.hash)).toEqual([
+			"advanced-committed",
+		]);
+		expect(await follower.read("advanced-key")).toBe("advanced-value");
+		expect(await follower.read("old-key")).toBeNull();
+	});
 });
