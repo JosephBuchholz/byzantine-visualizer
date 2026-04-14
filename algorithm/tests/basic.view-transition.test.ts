@@ -62,7 +62,8 @@ describe("Basic HotStuff view transition mechanics", () => {
 		const prepare: PrepareMessage = {
 			type: MessageKind.Prepare,
 			viewNumber: 9,
-			senderId: other.id,
+			// In n=3, view 9 leader is node 0.
+			senderId: replica.id,
 			node: {
 				block: {
 					hash: "v9-block",
@@ -77,21 +78,21 @@ describe("Basic HotStuff view transition mechanics", () => {
 		const preCommit: PreCommitMessage = {
 			type: MessageKind.PreCommit,
 			viewNumber: 9,
-			senderId: other.id,
+			senderId: replica.id,
 			nodeHash: "v9-block",
 			justify: createQC("v9-block", 9, MessageKind.Prepare),
 		};
 		const commit: CommitMessage = {
 			type: MessageKind.Commit,
 			viewNumber: 9,
-			senderId: other.id,
+			senderId: replica.id,
 			nodeHash: "v9-block",
 			justify: createQC("v9-block", 9, MessageKind.PreCommit),
 		};
 		const decide: DecideMessage = {
 			type: MessageKind.Decide,
 			viewNumber: 9,
-			senderId: other.id,
+			senderId: replica.id,
 			nodeHash: "v9-block",
 			justify: createQC("v9-block", 9, MessageKind.Commit),
 		};

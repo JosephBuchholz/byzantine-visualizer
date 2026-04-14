@@ -70,7 +70,8 @@ describe("Basic HotStuff committed-branch execution semantics", () => {
 		const decideC: DecideMessage = {
 			type: MessageKind.Decide,
 			viewNumber: 20,
-			senderId: leader.id,
+			// In n=3, view 20 leader is node 2.
+			senderId: other.id,
 			nodeHash: "C",
 			justify: createQC("C", 20, MessageKind.Commit),
 		};
