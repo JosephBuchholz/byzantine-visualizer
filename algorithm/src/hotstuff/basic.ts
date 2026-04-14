@@ -23,6 +23,12 @@ interface WriteBatch {
 	writes: { key: string; value: string | null }[];
 }
 
+interface PendingOperation {
+	key: string;
+	value: string | null;
+	resolve: () => void;
+}
+
 /**
  * Minimal HotStuff replica/leader used for visualization: maintains local state, batches client writes,
  * forwards them to the current leader, and drives Prepare → Pre-Commit when acting as leader.
@@ -35,6 +41,7 @@ export default class BasicHotStuffNode implements HotStuffNode {
 
 	messageQueue: HotStuffMessage[] = [];
 	pendingWrites: Map<string, string | null> = new Map();
+	pendingOperations: PendingOperation[] = [];
 	knownBlocksByHash: Map<string, Block> = new Map();
 	lastWriteBatch: WriteBatch | null = null;
 	leaderState: LeaderState | null = null;
@@ -65,9 +72,14 @@ export default class BasicHotStuffNode implements HotStuffNode {
 	 * The write is not applied immediately; it is batched and later proposed by the current leader.
 	 */
 	async put(key: string, value: string): Promise<void> {
+		// Keep proposal state up to date with the latest intent for this key.
 		this.pendingWrites.set(key, value);
 
-		// todo: promise should resolve when the write is committed
+		// Resolve this API call only after DECIDE executes the matching committed write.
+		// Tracking is local so a follower request can stay pending through forward/propose phases.
+		return new Promise<void>((resolve) => {
+			this.pendingOperations.push({ key, value, resolve });
+		});
 	}
 
 	/**
@@ -75,9 +87,13 @@ export default class BasicHotStuffNode implements HotStuffNode {
 	 * A null value marks deletion and follows the same batching/proposal path as writes.
 	 */
 	async delete(key: string): Promise<void> {
+		// Represent delete as null in the proposal path so consensus carries explicit tombstones.
 		this.pendingWrites.set(key, null);
 
-		// todo: promise should resolve when the delete is committed
+		// Resolve this API call only after DECIDE executes the matching committed delete.
+		return new Promise<void>((resolve) => {
+			this.pendingOperations.push({ key, value: null, resolve });
+		});
 	}
 
 	/**
@@ -302,11 +318,15 @@ export default class BasicHotStuffNode implements HotStuffNode {
 				// This preserves valid empty-string writes ("") as writes instead of misclassifying
 				// them as deletes, which keeps visualization state faithful to client intent.
 				if (value === null) {
-					await leader.delete(key);
+					// Do not await commit-aware completion here: forwarding should only enqueue work
+					// on the leader and return immediately so the simulation loop cannot deadlock.
+					void leader.delete(key);
 					continue;
 				}
 
-				await leader.put(key, value);
+				// Do not await commit-aware completion here for the same reason as above.
+				// The caller's own completion promise resolves later when DECIDE executes locally.
+				void leader.put(key, value);
 			}
 
 			// Remove locally queued writes after forwarding to avoid duplicate re-forwarding
@@ -949,10 +969,14 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			for (const write of this.extractWrites(block.data)) {
 				if (write.value === null) {
 					await this.dataStore.delete(write.key);
+					// Complete exactly one matching delete operation now that consensus executed it.
+					this.resolveCommittedOperation(write.key, null);
 					this.pendingWrites.delete(write.key);
 					continue;
 				}
 				await this.dataStore.put(write.key, write.value);
+				// Complete exactly one matching write operation now that consensus executed it.
+				this.resolveCommittedOperation(write.key, write.value);
 				this.pendingWrites.delete(write.key);
 			}
 
@@ -1027,6 +1051,23 @@ export default class BasicHotStuffNode implements HotStuffNode {
 				(typeof (write as { value?: unknown }).value === "string" ||
 					(write as { value?: unknown }).value === null),
 		);
+	}
+
+	/**
+	 * Resolve the earliest pending client operation that matches an executed committed write.
+	 * Matching by both key and value prevents resolving unrelated operations on the same key.
+	 */
+	private resolveCommittedOperation(key: string, value: string | null): void {
+		// Use first-match order so repeated identical operations settle in submission order.
+		const operationIndex = this.pendingOperations.findIndex(
+			(operation) => operation.key === key && operation.value === value,
+		);
+		if (operationIndex < 0) {
+			return;
+		}
+
+		const [operation] = this.pendingOperations.splice(operationIndex, 1);
+		operation?.resolve();
 	}
 
 	/**

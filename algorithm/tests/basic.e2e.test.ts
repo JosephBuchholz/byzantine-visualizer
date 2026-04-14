@@ -65,7 +65,7 @@ describe("Basic HotStuff End-to-End Scenarios", () => {
 		const nodes = [leader, followerA, followerB] as const;
 		setLeaderState(leader);
 
-		await leader.put("e2e-key", "e2e-value");
+		void leader.put("e2e-key", "e2e-value");
 
 		// Act
 		await leader.step(nodes);
@@ -121,8 +121,8 @@ describe("Basic HotStuff End-to-End Scenarios", () => {
 
 		// Model client broadcast semantics by submitting the same command to multiple correct replicas.
 		// This avoids relying on repeated follower re-forwarding to a faulty leader.
-		await nodes[1]!.put("recover-key", "recover-value");
-		await nodes[2]!.put("recover-key", "recover-value");
+		void nodes[1]!.put("recover-key", "recover-value");
+		void nodes[2]!.put("recover-key", "recover-value");
 		await nodes[2]!.step(nodes);
 
 		let observedNewViewAtNextLeader = false;
@@ -205,7 +205,7 @@ describe("Basic HotStuff End-to-End Scenarios", () => {
 		newLeader.message(newViewFromLeader);
 		newLeader.message(newViewFromReplicaA);
 		newLeader.message(newViewFromStaleReplica);
-		await newLeader.put("carry-over-key", "carry-over-value");
+		void newLeader.put("carry-over-key", "carry-over-value");
 
 		// Act
 		await newLeader.step(nodes);

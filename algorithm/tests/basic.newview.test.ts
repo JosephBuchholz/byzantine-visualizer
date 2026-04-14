@@ -117,7 +117,7 @@ describe("Basic HotStuff NEW-VIEW protocol processing", () => {
 
 		leader.replicaState.viewNumber = 1;
 		leader.leaderState!.viewNumber = 1;
-		await leader.put("nv-key", "nv-value");
+		void leader.put("nv-key", "nv-value");
 
 		// Act
 		await leader.step(nodes);
@@ -178,7 +178,7 @@ describe("Basic HotStuff NEW-VIEW protocol processing", () => {
 		leader.message(nv1);
 		leader.message(nv2);
 		leader.message(nv3);
-		await leader.put("carry-key", "carry-value");
+		void leader.put("carry-key", "carry-value");
 
 		// Act
 		await leader.step(nodes);

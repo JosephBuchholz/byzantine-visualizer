@@ -41,7 +41,7 @@ describe("Basic HotStuff follower forwarding semantics", () => {
 		];
 		const nodes = [leader, followerA, followerB] as const;
 
-		await followerA.put("empty-value-key", "");
+		void followerA.put("empty-value-key", "");
 
 		// Act
 		await followerA.step(nodes);
@@ -71,9 +71,9 @@ describe("Basic HotStuff follower forwarding semantics", () => {
 		];
 		const nodes = [leader, followerA, followerB] as const;
 
-		await followerA.put("k-empty", "");
-		await followerA.put("k-text", "hello");
-		await followerB.delete("k-delete");
+		void followerA.put("k-empty", "");
+		void followerA.put("k-text", "hello");
+		void followerB.delete("k-delete");
 
 		// Act
 		await followerA.step(nodes);

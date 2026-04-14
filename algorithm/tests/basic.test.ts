@@ -74,10 +74,10 @@ describe("Basic HotStuff Algorithm", () => {
 		const nodes = [createTestNode(0, config), createTestNode(1, config), createTestNode(2, config)];
 
 		// Act
-		await nodes[1]!.put("key1", "value1");
-		await nodes[2]!.put("key2", "value2");
-		await nodes[1]!.delete("key3");
-		await nodes[2]!.delete("key4");
+		void nodes[1]!.put("key1", "value1");
+		void nodes[2]!.put("key2", "value2");
+		void nodes[1]!.delete("key3");
+		void nodes[2]!.delete("key4");
 
 		await nodes[1]!.step(nodes);
 		await nodes[2]!.step(nodes);
@@ -184,9 +184,9 @@ describe("Basic HotStuff Algorithm", () => {
 		];
 		setLeaderState(n1);
 
-		await n1.put("key0", "value0");
-		await n2.put("key1", "value1");
-		await n3.put("key2", "value2");
+		void n1.put("key0", "value0");
+		void n2.put("key1", "value1");
+		void n3.put("key2", "value2");
 
 		// Act
 		await n3.step([n1, n2, n3]); // sends message to leader

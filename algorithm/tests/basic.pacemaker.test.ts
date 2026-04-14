@@ -80,7 +80,7 @@ describe("Basic HotStuff pacemaker liveness orchestration", () => {
 
 		leader.message(nvFromN1);
 		leader.message(nvFromN2);
-		await leader.put("beat-key", "beat-value");
+		void leader.put("beat-key", "beat-value");
 
 		// Act
 		await leader.step(nodes);
@@ -145,7 +145,7 @@ describe("Basic HotStuff pacemaker liveness orchestration", () => {
 		leader.message(newerFromN1);
 		leader.message(fromN2);
 		leader.message(fromN3);
-		await leader.put("carry-key", "carry-value");
+		void leader.put("carry-key", "carry-value");
 
 		// Act
 		await leader.step(nodes);
@@ -208,7 +208,7 @@ describe("Basic HotStuff pacemaker liveness orchestration", () => {
 		expect(n1.messageQueue.some((message) => message.type === MessageKind.Prepare)).toBe(false);
 
 		// Act (beat arrives)
-		await leader.put("beat", "value");
+		void leader.put("beat", "value");
 		await leader.step(nodes);
 
 		// Assert (proposal after beat, anchored to collected highQC)
