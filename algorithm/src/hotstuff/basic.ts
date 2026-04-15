@@ -660,7 +660,9 @@ export default class BasicHotStuffNode implements HotStuffNode {
 		}
 
 		// Reject invalid evidence before it can affect leader state or highQC selection.
-		if (!this.verifyQuorumCertificate(message.prepareQC, message.prepareQC.type, "NEW-VIEW evidence")) {
+		if (
+			!this.verifyQuorumCertificate(message.prepareQC, message.prepareQC.type, "NEW-VIEW evidence")
+		) {
 			return;
 		}
 
@@ -1034,7 +1036,13 @@ export default class BasicHotStuffNode implements HotStuffNode {
 		}
 
 		// Verify the prepareQC before it is accepted into replica state.
-		if (!this.verifyQuorumCertificate(message.justify, MessageKind.Prepare, `PRE-COMMIT ${message.nodeHash}`)) {
+		if (
+			!this.verifyQuorumCertificate(
+				message.justify,
+				MessageKind.Prepare,
+				`PRE-COMMIT ${message.nodeHash}`,
+			)
+		) {
 			return;
 		}
 
@@ -1156,7 +1164,13 @@ export default class BasicHotStuffNode implements HotStuffNode {
 		}
 
 		// Verify the precommitQC before it is allowed to become the replica's lock.
-		if (!this.verifyQuorumCertificate(message.justify, MessageKind.PreCommit, `COMMIT ${message.nodeHash}`)) {
+		if (
+			!this.verifyQuorumCertificate(
+				message.justify,
+				MessageKind.PreCommit,
+				`COMMIT ${message.nodeHash}`,
+			)
+		) {
 			return;
 		}
 
@@ -1172,7 +1186,9 @@ export default class BasicHotStuffNode implements HotStuffNode {
 
 		// Enforce strict phase ordering: COMMIT is only valid after PRE-COMMIT acceptance
 		// for the same (view, nodeHash) at this replica.
-		if (!this.hasAcceptedPhase(this.acceptedPreCommitByView, message.viewNumber, message.nodeHash)) {
+		if (
+			!this.hasAcceptedPhase(this.acceptedPreCommitByView, message.viewNumber, message.nodeHash)
+		) {
 			this.log(
 				LogLevel.Warning,
 				`Rejected COMMIT for ${message.nodeHash}: PRE-COMMIT not accepted for view ${message.viewNumber}.`,
@@ -1292,7 +1308,13 @@ export default class BasicHotStuffNode implements HotStuffNode {
 		}
 
 		// Verify the commitQC before any branch execution is permitted.
-		if (!this.verifyQuorumCertificate(message.justify, MessageKind.Commit, `DECIDE ${message.nodeHash}`)) {
+		if (
+			!this.verifyQuorumCertificate(
+				message.justify,
+				MessageKind.Commit,
+				`DECIDE ${message.nodeHash}`,
+			)
+		) {
 			return;
 		}
 

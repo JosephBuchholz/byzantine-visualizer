@@ -49,7 +49,11 @@ function createQC(nodeHash: string, viewNumber: number, type: MessageKind): Quor
 }
 
 /** Clone a QC fixture but replace the signature with an obviously invalid payload. */
-function createInvalidQC(nodeHash: string, viewNumber: number, type: MessageKind): QuorumCertificate {
+function createInvalidQC(
+	nodeHash: string,
+	viewNumber: number,
+	type: MessageKind,
+): QuorumCertificate {
 	return {
 		type,
 		viewNumber,

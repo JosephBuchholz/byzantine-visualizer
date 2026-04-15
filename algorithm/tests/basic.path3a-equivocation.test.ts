@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 import { type HotStuffConfig } from "../src/index.js";
 import BasicHotStuffNode from "../src/hotstuff/basic.js";
 import { InMemoryDataStore } from "../src/data/store.js";
-import { MessageKind, type PrepareMessage, type QuorumCertificate, type VoteMessage } from "../src/types.js";
+import {
+	MessageKind,
+	type PrepareMessage,
+	type QuorumCertificate,
+	type VoteMessage,
+} from "../src/types.js";
 
 /** Build deterministic config for path-level educational scenarios. */
 function createTestConfig(overrides?: Partial<Required<HotStuffConfig>>): Required<HotStuffConfig> {
@@ -33,11 +38,7 @@ function createQC(nodeHash: string, viewNumber: number, type: MessageKind): Quor
 }
 
 /** Build a leader-authenticated PREPARE for a specific proposal hash. */
-function createPrepare(
-	leaderId: number,
-	viewNumber: number,
-	proposalHash: string,
-): PrepareMessage {
+function createPrepare(leaderId: number, viewNumber: number, proposalHash: string): PrepareMessage {
 	return {
 		type: MessageKind.Prepare,
 		viewNumber,
@@ -101,7 +102,9 @@ describe("Basic HotStuff Path 3A equivocation scenario", () => {
 				message.type === MessageKind.Vote && message.voteType === MessageKind.Prepare,
 		);
 		expect(prepareVotesAtLeader).toHaveLength(2);
-		expect(new Set(prepareVotesAtLeader.map((vote) => vote.nodeHash))).toEqual(new Set(["path3a-A", "path3a-B"]));
+		expect(new Set(prepareVotesAtLeader.map((vote) => vote.nodeHash))).toEqual(
+			new Set(["path3a-A", "path3a-B"]),
+		);
 
 		await leaderV2.step(nodes);
 

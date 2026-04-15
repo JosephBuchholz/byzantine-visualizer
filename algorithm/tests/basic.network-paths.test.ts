@@ -169,4 +169,70 @@ describe("Basic HotStuff explicit network-path scenarios", () => {
 		// Liveness pre-GST is not guaranteed: nodes keep moving views via timeout.
 		expect(Math.max(...nodes.map((node) => node.replicaState.viewNumber))).toBeGreaterThan(0);
 	});
+
+	/**
+	 * Path 5 (recovery extension) — partition heals and progress resumes.
+	 *
+	 * What this test demonstrates:
+	 * Liveness can be unavailable while a pre-GST partition exists, but once connectivity is restored
+	 * (GST-like healing), Basic HotStuff eventually regains progress and commits consistently.
+	 *
+	 * How it demonstrates it:
+	 * 1) Start with the same 2+2 partition used by Path 5 and keep dropping cross-partition messages.
+	 * 2) Verify no commits occur during the partitioned rounds.
+	 * 3) Stop dropping cross-partition messages (healed network) and keep stepping all nodes.
+	 * 4) Assert all replicas eventually commit the client write and converge on the same tip hash.
+	 */
+	it("Path 5 recovery: after GST-like healing, replicas eventually make progress and converge", async () => {
+		// Arrange
+		const config = createTestConfig({ leaderTimeoutMaxMs: 1, maxBatchSize: 1 });
+		const [n0, n1, n2, n3] = [
+			createTestNode(0, config),
+			createTestNode(1, config),
+			createTestNode(2, config),
+			createTestNode(3, config),
+		];
+		const nodes = [n0, n1, n2, n3] as const;
+
+		const partitionA = new Set<number>([0, 1]);
+		const partitionB = new Set<number>([2, 3]);
+
+		void n0.put("path5-heal-key", "path5-heal-value");
+
+		// Act (phase 1: partitioned transport, pre-GST style)
+		for (let round = 0; round < 12; round += 1) {
+			dropCrossPartitionMessages(nodes, partitionA, partitionB);
+			for (const node of nodes) {
+				await node.step(nodes);
+			}
+			dropCrossPartitionMessages(nodes, partitionA, partitionB);
+		}
+
+		// Assert pre-heal state: safety preserved, liveness stalled.
+		expect(nodes.every((node) => node.replicaState.committedBlocks.length === 0)).toBe(true);
+
+		// Act (phase 2: healed transport, GST-like period with bounded delay)
+		let convergedCommit = false;
+		for (let round = 0; round < 36; round += 1) {
+			for (const node of nodes) {
+				await node.step(nodes);
+			}
+
+			convergedCommit = nodes.every((node) => node.replicaState.committedBlocks.length > 0);
+			if (convergedCommit) {
+				break;
+			}
+		}
+
+		// Assert post-heal state: eventual progress and convergence.
+		expect(convergedCommit).toBe(true);
+		for (const node of nodes) {
+			expect(await node.read("path5-heal-key")).toBe("path5-heal-value");
+		}
+
+		const committedTipHashes = new Set(
+			nodes.map((node) => node.replicaState.committedBlocks.at(-1)?.hash),
+		);
+		expect(committedTipHashes.size).toBe(1);
+	});
 });
