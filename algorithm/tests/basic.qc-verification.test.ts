@@ -7,6 +7,7 @@ import {
 	type CommitMessage,
 	type DecideMessage,
 	type NewViewMessage,
+	type PrepareMessage,
 	type PreCommitMessage,
 	type QuorumCertificate,
 } from "../src/types.js";
@@ -58,6 +59,106 @@ function createInvalidQC(nodeHash: string, viewNumber: number, type: MessageKind
 }
 
 describe("Basic HotStuff QC verification entrypoints", () => {
+	/**
+	 * Verifies PREPARE rejects a structurally valid proposal when its justify QC signature is invalid.
+	 * How: deliver PREPARE from the correct leader for the current view with parent linkage and safeNode
+	 * conditions satisfied, but with a bogus justify signature; follower must not update prepareQC/view
+	 * and must not emit a PREPARE vote.
+	 */
+	it("rejects PREPARE with an invalid justify QC signature", async () => {
+		// Arrange
+		const config = createTestConfig(4);
+		const [follower, n1, leaderForView2, n3] = [
+			createTestNode(0, config),
+			createTestNode(1, config),
+			createTestNode(2, config),
+			createTestNode(3, config),
+		];
+		const nodes = [follower, n1, leaderForView2, n3] as const;
+
+		follower.replicaState.viewNumber = 2;
+
+		const prepareMessage: PrepareMessage = {
+			type: MessageKind.Prepare,
+			viewNumber: 2,
+			senderId: leaderForView2.id,
+			node: {
+				block: {
+					hash: "qc-test-prepare",
+					parentHash: "qc-parent",
+					data: { writes: [] },
+					height: 1,
+				},
+				parentHash: "qc-parent",
+				justify: createInvalidQC("qc-parent", 2, MessageKind.Prepare),
+			},
+		};
+
+		follower.message(prepareMessage);
+
+		// Act
+		await follower.step(nodes);
+
+		// Assert
+		expect(follower.replicaState.prepareQC).toBeNull();
+		expect(follower.replicaState.viewNumber).toBe(2);
+		expect(leaderForView2.messageQueue).toHaveLength(0);
+	});
+
+	/**
+	 * Keeps PREPARE happy-path behavior intact while tightening QC verification.
+	 * How: send a PREPARE from the correct leader with a valid justify QC and valid parent linkage,
+	 * then assert follower still updates prepareQC/view and emits a PREPARE vote.
+	 */
+	it("still accepts PREPARE when justify QC signature is valid", async () => {
+		// Arrange
+		const config = createTestConfig(4);
+		const [follower, n1, leaderForView2, n3] = [
+			createTestNode(0, config),
+			createTestNode(1, config),
+			createTestNode(2, config),
+			createTestNode(3, config),
+		];
+		const nodes = [follower, n1, leaderForView2, n3] as const;
+
+		follower.replicaState.viewNumber = 2;
+
+		const validJustify = createQC("qc-parent-valid", 2, MessageKind.Prepare);
+		const prepareMessage: PrepareMessage = {
+			type: MessageKind.Prepare,
+			viewNumber: 2,
+			senderId: leaderForView2.id,
+			node: {
+				block: {
+					hash: "qc-test-prepare-valid",
+					parentHash: "qc-parent-valid",
+					data: { writes: [] },
+					height: 1,
+				},
+				parentHash: "qc-parent-valid",
+				justify: validJustify,
+			},
+		};
+
+		follower.message(prepareMessage);
+
+		// Act
+		await follower.step(nodes);
+
+		// Assert
+		expect(follower.replicaState.prepareQC).toEqual(validJustify);
+		expect(follower.replicaState.viewNumber).toBe(2);
+
+		expect(leaderForView2.messageQueue).toHaveLength(1);
+		const vote = leaderForView2.messageQueue[0]!;
+		expect(vote.type).toBe(MessageKind.Vote);
+		if (vote.type === MessageKind.Vote) {
+			expect(vote.voteType).toBe(MessageKind.Prepare);
+			expect(vote.nodeHash).toBe("qc-test-prepare-valid");
+			expect(vote.senderId).toBe(follower.id);
+		}
+	});
+
 	/**
 	 * Verifies PRE-COMMIT rejects a structurally valid QC when its signature is invalid.
 	 * How: deliver a PRE-COMMIT from the correct leader for the current view, but replace the QC
