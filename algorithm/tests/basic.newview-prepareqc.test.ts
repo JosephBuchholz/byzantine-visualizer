@@ -75,7 +75,7 @@ describe("Basic HotStuff NEW-VIEW prepareQC semantics", () => {
 		if (newView) {
 			expect(newView.senderId).toBe(replica.id);
 			expect(newView.viewNumber).toBe(6);
-			expect(newView.lockedQC.nodeHash).toBe("GENESIS");
+			expect(newView.prepareQC.nodeHash).toBe("GENESIS");
 		}
 	});
 
@@ -106,14 +106,14 @@ describe("Basic HotStuff NEW-VIEW prepareQC semantics", () => {
 			type: MessageKind.NewView,
 			viewNumber: 1,
 			senderId: n0.id,
-			lockedQC: createQC("low-evidence", 3, MessageKind.Prepare),
+			prepareQC: createQC("low-evidence", 3, MessageKind.Prepare),
 			partialSig: "nv-low",
 		};
 		const higherEvidence: NewViewMessage = {
 			type: MessageKind.NewView,
 			viewNumber: 1,
 			senderId: n2.id,
-			lockedQC: createQC("higher-evidence", 6, MessageKind.Prepare),
+			prepareQC: createQC("higher-evidence", 6, MessageKind.Prepare),
 			partialSig: "nv-high",
 		};
 

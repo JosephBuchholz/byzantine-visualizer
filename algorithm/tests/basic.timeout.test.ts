@@ -65,7 +65,7 @@ describe("Basic HotStuff timeout/interrupt liveness", () => {
 		if (newView) {
 			expect(newView.senderId).toBe(n2.id);
 			expect(newView.viewNumber).toBe(6);
-			expect(newView.lockedQC.nodeHash).toBe("qc-v5");
+			expect(newView.prepareQC.nodeHash).toBe("qc-v5");
 		}
 	});
 

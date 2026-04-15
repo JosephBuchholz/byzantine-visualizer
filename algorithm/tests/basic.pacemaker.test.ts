@@ -67,14 +67,14 @@ describe("Basic HotStuff pacemaker liveness orchestration", () => {
 			type: MessageKind.NewView,
 			viewNumber: 2,
 			senderId: n1.id,
-			lockedQC: createQC("n1-qc", 4, MessageKind.Prepare),
+			prepareQC: createQC("n1-qc", 4, MessageKind.Prepare),
 			partialSig: "nv-1",
 		};
 		const nvFromN2: NewViewMessage = {
 			type: MessageKind.NewView,
 			viewNumber: 2,
 			senderId: n0.id,
-			lockedQC: createQC("n0-qc", 5, MessageKind.Prepare),
+			prepareQC: createQC("n0-qc", 5, MessageKind.Prepare),
 			partialSig: "nv-2",
 		};
 
@@ -116,28 +116,28 @@ describe("Basic HotStuff pacemaker liveness orchestration", () => {
 			type: MessageKind.NewView,
 			viewNumber: 3,
 			senderId: n1.id,
-			lockedQC: createQC("n1-old", 2, MessageKind.Prepare),
+			prepareQC: createQC("n1-old", 2, MessageKind.Prepare),
 			partialSig: "nv-n1-old",
 		};
 		const newerFromN1: NewViewMessage = {
 			type: MessageKind.NewView,
 			viewNumber: 3,
 			senderId: n1.id,
-			lockedQC: createQC("n1-new", 9, MessageKind.Prepare),
+			prepareQC: createQC("n1-new", 9, MessageKind.Prepare),
 			partialSig: "nv-n1-new",
 		};
 		const fromN2: NewViewMessage = {
 			type: MessageKind.NewView,
 			viewNumber: 3,
 			senderId: n2.id,
-			lockedQC: createQC("n2-mid", 5, MessageKind.Prepare),
+			prepareQC: createQC("n2-mid", 5, MessageKind.Prepare),
 			partialSig: "nv-n2",
 		};
 		const fromN3: NewViewMessage = {
 			type: MessageKind.NewView,
 			viewNumber: 3,
 			senderId: n0.id,
-			lockedQC: createQC("n0-low", 4, MessageKind.Prepare),
+			prepareQC: createQC("n0-low", 4, MessageKind.Prepare),
 			partialSig: "nv-n0",
 		};
 
@@ -183,21 +183,21 @@ describe("Basic HotStuff pacemaker liveness orchestration", () => {
 			type: MessageKind.NewView,
 			viewNumber: 4,
 			senderId: n1.id,
-			lockedQC: createQC("low", 3, MessageKind.Prepare),
+			prepareQC: createQC("low", 3, MessageKind.Prepare),
 			partialSig: "nv-1",
 		});
 		leader.message({
 			type: MessageKind.NewView,
 			viewNumber: 4,
 			senderId: n2.id,
-			lockedQC: createQC("high", 10, MessageKind.Prepare),
+			prepareQC: createQC("high", 10, MessageKind.Prepare),
 			partialSig: "nv-2",
 		});
 		leader.message({
 			type: MessageKind.NewView,
 			viewNumber: 4,
 			senderId: n3.id,
-			lockedQC: createQC("mid", 7, MessageKind.Prepare),
+			prepareQC: createQC("mid", 7, MessageKind.Prepare),
 			partialSig: "nv-3",
 		});
 

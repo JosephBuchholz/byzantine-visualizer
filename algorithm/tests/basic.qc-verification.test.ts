@@ -200,14 +200,14 @@ describe("Basic HotStuff QC verification entrypoints", () => {
 			type: MessageKind.NewView,
 			viewNumber: 1,
 			senderId: n0.id,
-			lockedQC: createInvalidQC("nv-bad-a", 5, MessageKind.Prepare),
+			prepareQC: createInvalidQC("nv-bad-a", 5, MessageKind.Prepare),
 			partialSig: "nv-sig-a",
 		};
 		const invalidNewViewFromN2: NewViewMessage = {
 			type: MessageKind.NewView,
 			viewNumber: 1,
 			senderId: n2.id,
-			lockedQC: createInvalidQC("nv-bad-b", 6, MessageKind.Prepare),
+			prepareQC: createInvalidQC("nv-bad-b", 6, MessageKind.Prepare),
 			partialSig: "nv-sig-b",
 		};
 

@@ -614,7 +614,7 @@ export default class BasicHotStuffNode implements HotStuffNode {
 		}
 
 		// Reject invalid evidence before it can affect leader state or highQC selection.
-		if (!this.verifyQuorumCertificate(message.lockedQC, message.lockedQC.type, "NEW-VIEW evidence")) {
+		if (!this.verifyQuorumCertificate(message.prepareQC, message.prepareQC.type, "NEW-VIEW evidence")) {
 			return;
 		}
 
@@ -637,7 +637,7 @@ export default class BasicHotStuffNode implements HotStuffNode {
 		);
 		if (existingIndex >= 0) {
 			const existing = this.leaderState.collectedNewViews[existingIndex]!;
-			if (message.lockedQC.viewNumber > existing.lockedQC.viewNumber) {
+			if (message.prepareQC.viewNumber > existing.prepareQC.viewNumber) {
 				this.leaderState.collectedNewViews[existingIndex] = message;
 			}
 			return;
@@ -655,11 +655,11 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			return null;
 		}
 
-		// Start with leader-local QC evidence so self NEW-VIEW contributes to highQC selection.
-		let highest = this.replicaState.prepareQC ?? this.replicaState.lockedQC ?? genesisQC();
+		// Start with leader-local prepareQC evidence so self NEW-VIEW contributes to highQC selection.
+		let highest = this.replicaState.prepareQC ?? genesisQC();
 		for (const message of this.leaderState.collectedNewViews) {
-			if (message.lockedQC.viewNumber > highest.viewNumber) {
-				highest = message.lockedQC;
+			if (message.prepareQC.viewNumber > highest.viewNumber) {
+				highest = message.prepareQC;
 			}
 		}
 
@@ -700,13 +700,13 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			this.leaderState.collectedNewViews = [];
 		}
 
-		// Carry the highest local QC evidence into NEW-VIEW, falling back to genesis when empty.
-		const carriedQC = this.replicaState.prepareQC ?? this.replicaState.lockedQC ?? genesisQC();
+		// Carry the highest prepareQC evidence into NEW-VIEW, falling back to genesis when empty.
+		const carriedQC = this.replicaState.prepareQC ?? genesisQC();
 		const newView: NewViewMessage = {
 			type: MessageKind.NewView,
 			viewNumber: nextView,
 			senderId: this.id,
-			lockedQC: carriedQC,
+			prepareQC: carriedQC,
 			partialSig: `nv-sig-${this.id}-${nextView}-${carriedQC.nodeHash}`,
 		};
 
