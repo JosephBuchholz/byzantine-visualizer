@@ -9,7 +9,7 @@
 	"main": "dist/index.js",
 	"exports": "./dist/index.js",
 	"scripts": {
-		"build": "tsc",
+		"build": "tsc -p tsconfig.build.json",
 		"fmt": "oxfmt",
 		"fmt:check": "oxfmt --check",
 		"lint": "oxlint",

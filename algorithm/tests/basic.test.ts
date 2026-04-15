@@ -320,6 +320,8 @@ describe("Basic HotStuff Algorithm", () => {
 			nodeHash: "block-2",
 			justify: prepareQC,
 		};
+		// Seed prior PREPARE acceptance so this test keeps focusing on valid PRE-COMMIT behavior.
+		follower.acceptedPrepareByView.set(3, new Set(["block-2"]));
 
 		follower.message(preCommitMessage);
 
@@ -452,6 +454,8 @@ describe("Basic HotStuff Algorithm", () => {
 			nodeHash: "block-commit-2",
 			justify: precommitQC,
 		};
+		// Seed prior PRE-COMMIT acceptance so this test keeps focusing on valid COMMIT behavior.
+		follower.acceptedPreCommitByView.set(6, new Set(["block-commit-2"]));
 
 		follower.message(commitMessage);
 
@@ -503,6 +507,10 @@ describe("Basic HotStuff Algorithm", () => {
 			nodeHash: "block-commit-3",
 			justify: createQC("different-block", 0, MessageKind.PreCommit),
 		};
+
+		// Seed prior PRE-COMMIT acceptance for the valid path so this test still isolates
+		// QC mismatch rejection behavior on the second COMMIT.
+		follower.acceptedPreCommitByView.set(0, new Set(["block-commit-3-valid"]));
 
 		follower.message(validCommitMessage);
 		follower.message(badCommitMessage);

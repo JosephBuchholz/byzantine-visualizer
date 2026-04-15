@@ -103,11 +103,11 @@ export interface VoteMessage extends BaseMessage {
 
 /**
  * View-change signal sent to the next leader.
- * Carries the sender's highest lock/QC evidence for safe proposal selection.
+ * Carries the sender's highest prepareQC so the next leader can extend the newest safe branch.
  */
 export interface NewViewMessage extends BaseMessage {
 	type: MessageKind.NewView;
-	lockedQC: QuorumCertificate;
+	prepareQC: QuorumCertificate;
 	partialSig: string;
 }
 

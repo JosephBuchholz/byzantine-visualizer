@@ -235,21 +235,21 @@ describe("Basic HotStuff End-to-End Scenarios", () => {
 			type: MessageKind.NewView,
 			viewNumber: 1,
 			senderId: newLeader.id,
-			lockedQC: oldLockQC,
+			prepareQC: oldLockQC,
 			partialSig: "nv-sig-1",
 		};
 		const newViewFromReplicaA: NewViewMessage = {
 			type: MessageKind.NewView,
 			viewNumber: 1,
 			senderId: replicaA.id,
-			lockedQC: highPrepareQC,
+			prepareQC: highPrepareQC,
 			partialSig: "nv-sig-2",
 		};
 		const newViewFromStaleReplica: NewViewMessage = {
 			type: MessageKind.NewView,
 			viewNumber: 1,
 			senderId: staleLockedReplica.id,
-			lockedQC: oldLockQC,
+			prepareQC: oldLockQC,
 			partialSig: "nv-sig-3",
 		};
 

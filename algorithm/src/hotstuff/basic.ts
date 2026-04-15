@@ -48,12 +48,30 @@ export default class BasicHotStuffNode implements HotStuffNode {
 	stepsWithoutProgress = 0;
 	timeoutBackoffExponent = 0;
 	suppressTimeoutForView: number | null = null;
+	// Tracks the last view where this node already proposed a block.
+	// Used to prevent repeated proposals in the same view when retry buffers are rehydrated.
+	lastProposedView = -1;
 	// vheight-style local voting memory: highest view this replica has voted PREPARE in.
 	// This enforces monotonic voting and blocks stale re-votes.
 	prepareVoteView = -1;
 	// Tracks which proposal hash this replica already voted for in prepareVoteView.
 	// This prevents conflicting votes inside the same view.
 	prepareVoteNodeHash: string | null = null;
+	// PRE-COMMIT per-phase vote memory (same structure as PREPARE voting memory).
+	preCommitVoteView = -1;
+	preCommitVoteNodeHash: string | null = null;
+	// COMMIT per-phase vote memory (same structure as PREPARE voting memory).
+	commitVoteView = -1;
+	commitVoteNodeHash: string | null = null;
+	// Tracks which nodes this replica has accepted in PREPARE for each view.
+	// Used to enforce strict phase ordering before PRE-COMMIT can be accepted.
+	acceptedPrepareByView: Map<number, Set<string>> = new Map();
+	// Tracks which nodes this replica has accepted in PRE-COMMIT for each view.
+	// Used to enforce strict phase ordering before COMMIT can be accepted.
+	acceptedPreCommitByView: Map<number, Set<string>> = new Map();
+	// Tracks which nodes this replica has accepted in COMMIT for each view.
+	// Used to enforce strict phase ordering before DECIDE can be accepted.
+	acceptedCommitByView: Map<number, Set<string>> = new Map();
 
 	abortResolver: (() => void) | null = null;
 	pauseController: Promise<void> | null = null;
@@ -296,13 +314,22 @@ export default class BasicHotStuffNode implements HotStuffNode {
 				}
 			}
 
+			// Leader reliability path:
+			// If unresolved client operations exist but transient pendingWrites is empty (e.g., prior
+			// proposal did not finalize under partition), rebuild pendingWrites so the leader can retry
+			// proposal in later views.
+			if (this.pendingWrites.size === 0) {
+				this.rehydratePendingWritesFromUnresolvedOperations();
+			}
+
 			this.lastWriteBatch ??= { lastBatchTime: new Date(), writes: [] };
 
 			const elapsedSinceLastBatch = Date.now() - this.lastWriteBatch.lastBatchTime.getTime();
 			const batchDue =
 				this.pendingWrites.size >= this.config.maxBatchSize ||
 				elapsedSinceLastBatch >= this.config.maxBatchWaitTimeMs;
-			if (this.pendingWrites.size > 0 && batchDue) {
+			const alreadyProposedInThisView = this.lastProposedView === this.replicaState.viewNumber;
+			if (this.pendingWrites.size > 0 && batchDue && !alreadyProposedInThisView) {
 				this.log(
 					LogLevel.Info,
 					`Creating new proposal with ${this.pendingWrites.size} data store messages.`,
@@ -323,6 +350,14 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			return;
 		}
 
+		// Follower reliability path:
+		// If prior forwards/proposals were lost (e.g., pre-GST partition), unresolved client
+		// operations still exist in pendingOperations. Rehydrate pendingWrites from that unresolved
+		// intent so follower nodes can retry forwarding after leadership/view/network changes.
+		if (this.pendingWrites.size === 0) {
+			this.rehydratePendingWritesFromUnresolvedOperations();
+		}
+
 		// If not leader, forward pending writes to leader
 		if (this.pendingWrites.size > 0) {
 			const leader = this.findLeader(nodes);
@@ -331,20 +366,27 @@ export default class BasicHotStuffNode implements HotStuffNode {
 				`Forwarding ${this.pendingWrites.size} pending writes to leader (Node ${leader.id}).`,
 			);
 
-			// Forward pending writes to leader
+			// Forward pending writes to leader.
+			// Important: forwarding must enqueue proposal intent on the leader without creating a
+			// new client completion promise there. Using leader.put/delete for retries would append
+			// redundant pendingOperations on every forward attempt and can stall liveness.
+			const concreteLeader = leader instanceof BasicHotStuffNode ? leader : null;
+
 			for (const [key, value] of this.pendingWrites.entries()) {
 				// Forward semantics are based on explicit null, not truthiness.
 				// This preserves valid empty-string writes ("") as writes instead of misclassifying
 				// them as deletes, which keeps visualization state faithful to client intent.
-				if (value === null) {
-					// Do not await commit-aware completion here: forwarding should only enqueue work
-					// on the leader and return immediately so the simulation loop cannot deadlock.
-					void leader.delete(key);
+				if (concreteLeader) {
+					concreteLeader.pendingWrites.set(key, value);
 					continue;
 				}
 
-				// Do not await commit-aware completion here for the same reason as above.
-				// The caller's own completion promise resolves later when DECIDE executes locally.
+				// Fallback path for non-BasicHotStuffNode peers (defensive for interface usage).
+				// We still avoid awaiting so forwarding remains non-blocking for the simulation loop.
+				if (value === null) {
+					void leader.delete(key);
+					continue;
+				}
 				void leader.put(key, value);
 			}
 
@@ -356,11 +398,48 @@ export default class BasicHotStuffNode implements HotStuffNode {
 		this.maybeTimeoutToNextView(nodes, madeProgress);
 	}
 
+	/**
+	 * Rebuild pendingWrites from unresolved client operations.
+	 *
+	 * Why this exists:
+	 * - pendingWrites is a transient outbound buffer and is intentionally cleared after forward/propose.
+	 * - pendingOperations tracks commit-aware unresolved client intent.
+	 * - During partitions, forwarded messages can be dropped; rebuilding from unresolved intent lets
+	 *   followers retry automatically after timeout/view changes and after network healing.
+	 *
+	 * How it works:
+	 * 1) Iterate unresolved operations in submission order.
+	 * 2) Keep the latest value per key in a temporary map (matches existing pendingWrites semantics).
+	 * 3) Reinsert only keys not currently present in pendingWrites.
+	 */
+	private rehydratePendingWritesFromUnresolvedOperations(): void {
+		if (this.pendingOperations.length === 0) {
+			return;
+		}
+
+		const latestByKey = new Map<string, string | null>();
+		for (const operation of this.pendingOperations) {
+			latestByKey.set(operation.key, operation.value);
+		}
+
+		for (const [key, value] of latestByKey.entries()) {
+			if (this.pendingWrites.has(key)) {
+				continue;
+			}
+			this.pendingWrites.set(key, value);
+		}
+	}
+
 	/** Leader-only: build a block from pending writes and broadcast a Prepare. */
 	private propose(nodes: readonly Readonly<HotStuffNode>[]) {
 		if (!this.lastWriteBatch) {
 			return;
 		}
+
+		// Record that this view has already produced a proposal from this leader.
+		// Retry logic may rehydrate pending writes, but this guard keeps at most one proposal
+		// per view and avoids same-view proposal churn.
+		this.lastProposedView = this.replicaState.viewNumber;
 
 		// For the parent hash, we use the prepareQC's node hash if it exists,
 		// otherwise we fall back to the lockedQC's node hash.
@@ -575,12 +654,79 @@ export default class BasicHotStuffNode implements HotStuffNode {
 	}
 
 	/**
+	 * Verify a QC using the simulator's deterministic signature convention.
+	 * The simulator does not implement real threshold cryptography here; instead it checks that
+	 * the QC is self-consistent and that its synthetic signature matches the expected pattern.
+	 */
+	private verifyQuorumCertificate(
+		qc: QuorumCertificate,
+		expectedType: MessageKind,
+		context: string,
+	): boolean {
+		// A QC can only be accepted when its phase matches the phase the caller expects.
+		if (qc.type !== expectedType) {
+			this.log(
+				LogLevel.Warning,
+				`Rejected QC in ${context}: expected type ${expectedType} but saw ${qc.type}.`,
+			);
+			return false;
+		}
+
+		// The simulator encodes valid QCs with a deterministic string so tests can model invalid ones.
+		const expectedThresholdSig = `qc-${qc.type}-${qc.viewNumber}-${qc.nodeHash}`;
+		if (qc.thresholdSig !== expectedThresholdSig) {
+			this.log(LogLevel.Warning, `Rejected QC in ${context}: invalid threshold signature.`);
+			return false;
+		}
+
+		return true;
+	}
+
+	/**
+	 * Record that a phase message for (view, nodeHash) was accepted by this replica.
+	 * How it works: lazily creates a set for the view, then inserts nodeHash.
+	 */
+	private recordAcceptedPhase(
+		store: Map<number, Set<string>>,
+		viewNumber: number,
+		nodeHash: string,
+	): void {
+		let acceptedInView = store.get(viewNumber);
+		if (!acceptedInView) {
+			acceptedInView = new Set<string>();
+			store.set(viewNumber, acceptedInView);
+		}
+
+		acceptedInView.add(nodeHash);
+	}
+
+	/**
+	 * Check whether a prior phase has already been accepted for (view, nodeHash).
+	 * How it works: reads the per-view set and returns true only when the exact nodeHash exists.
+	 */
+	private hasAcceptedPhase(
+		store: Map<number, Set<string>>,
+		viewNumber: number,
+		nodeHash: string,
+	): boolean {
+		const acceptedInView = store.get(viewNumber);
+		return acceptedInView?.has(nodeHash) ?? false;
+	}
+
+	/**
 	 * Leader-only NEW-VIEW intake.
 	 * Collects view-change evidence for the current view and deduplicates by sender
 	 * so one replica cannot inflate quorum counts.
 	 */
 	private handleNewViewMessage(message: NewViewMessage): void {
 		if (!this.leaderState) {
+			return;
+		}
+
+		// Reject invalid evidence before it can affect leader state or highQC selection.
+		if (
+			!this.verifyQuorumCertificate(message.prepareQC, message.prepareQC.type, "NEW-VIEW evidence")
+		) {
 			return;
 		}
 
@@ -603,7 +749,7 @@ export default class BasicHotStuffNode implements HotStuffNode {
 		);
 		if (existingIndex >= 0) {
 			const existing = this.leaderState.collectedNewViews[existingIndex]!;
-			if (message.lockedQC.viewNumber > existing.lockedQC.viewNumber) {
+			if (message.prepareQC.viewNumber > existing.prepareQC.viewNumber) {
 				this.leaderState.collectedNewViews[existingIndex] = message;
 			}
 			return;
@@ -621,11 +767,11 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			return null;
 		}
 
-		// Start with leader-local QC evidence so self NEW-VIEW contributes to highQC selection.
-		let highest = this.replicaState.prepareQC ?? this.replicaState.lockedQC ?? genesisQC();
+		// Start with leader-local prepareQC evidence so self NEW-VIEW contributes to highQC selection.
+		let highest = this.replicaState.prepareQC ?? genesisQC();
 		for (const message of this.leaderState.collectedNewViews) {
-			if (message.lockedQC.viewNumber > highest.viewNumber) {
-				highest = message.lockedQC;
+			if (message.prepareQC.viewNumber > highest.viewNumber) {
+				highest = message.prepareQC;
 			}
 		}
 
@@ -666,13 +812,13 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			this.leaderState.collectedNewViews = [];
 		}
 
-		// Carry the highest local QC evidence into NEW-VIEW, falling back to genesis when empty.
-		const carriedQC = this.replicaState.prepareQC ?? this.replicaState.lockedQC ?? genesisQC();
+		// Carry the highest prepareQC evidence into NEW-VIEW, falling back to genesis when empty.
+		const carriedQC = this.replicaState.prepareQC ?? genesisQC();
 		const newView: NewViewMessage = {
 			type: MessageKind.NewView,
 			viewNumber: nextView,
 			senderId: this.id,
-			lockedQC: carriedQC,
+			prepareQC: carriedQC,
 			partialSig: `nv-sig-${this.id}-${nextView}-${carriedQC.nodeHash}`,
 		};
 
@@ -838,6 +984,20 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			return;
 		}
 
+		// Verify the PREPARE justification QC before any acceptance logic mutates local state.
+		// How it works: this checks the simulator's deterministic threshold-signature format
+		// for the exact QC tuple carried by the proposal. If invalid, we reject immediately
+		// so the replica cannot adopt untrusted prepare evidence or emit a PREPARE vote.
+		if (
+			!this.verifyQuorumCertificate(
+				message.node.justify,
+				message.node.justify.type,
+				`PREPARE justify ${message.node.block.hash}`,
+			)
+		) {
+			return;
+		}
+
 		// Structural validity: proposed node must directly extend the QC it justifies.
 		const extendsJustify = message.node.parentHash === message.node.justify.nodeHash;
 		if (!extendsJustify) {
@@ -887,6 +1047,13 @@ export default class BasicHotStuffNode implements HotStuffNode {
 		this.prepareVoteView = message.viewNumber;
 		this.prepareVoteNodeHash = message.node.block.hash;
 
+		// Mark PREPARE as accepted so later phases can enforce strict ordering for this node/view.
+		this.recordAcceptedPhase(
+			this.acceptedPrepareByView,
+			message.viewNumber,
+			message.node.block.hash,
+		);
+
 		leader.message(vote);
 		this.log(
 			LogLevel.Info,
@@ -932,6 +1099,63 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			return;
 		}
 
+		// Verify the prepareQC before it is accepted into replica state.
+		if (
+			!this.verifyQuorumCertificate(
+				message.justify,
+				MessageKind.Prepare,
+				`PRE-COMMIT ${message.nodeHash}`,
+			)
+		) {
+			return;
+		}
+
+		// Enforce justify-view consistency: PRE-COMMIT message view must match prepareQC view.
+		// This prevents mixing phase evidence from different views in a single transition.
+		if (message.justify.viewNumber !== message.viewNumber) {
+			this.log(
+				LogLevel.Warning,
+				`Rejected PRE-COMMIT for ${message.nodeHash}: justify view ${message.justify.viewNumber} != message view ${message.viewNumber}.`,
+			);
+			return;
+		}
+
+		// Enforce strict phase ordering: PRE-COMMIT is only valid after PREPARE acceptance
+		// for the same (view, nodeHash) at this replica.
+		if (!this.hasAcceptedPhase(this.acceptedPrepareByView, message.viewNumber, message.nodeHash)) {
+			this.log(
+				LogLevel.Warning,
+				`Rejected PRE-COMMIT for ${message.nodeHash}: PREPARE not accepted for view ${message.viewNumber}.`,
+			);
+			return;
+		}
+
+		// PRE-COMMIT vote monotonicity across views: never vote again for an older view.
+		if (message.viewNumber < this.preCommitVoteView) {
+			this.log(
+				LogLevel.Warning,
+				`Rejected PRE-COMMIT for ${message.nodeHash}: already voted in newer view ${this.preCommitVoteView}.`,
+			);
+			return;
+		}
+
+		// PRE-COMMIT idempotency/conflict rule within one view.
+		if (message.viewNumber === this.preCommitVoteView) {
+			if (this.preCommitVoteNodeHash === message.nodeHash) {
+				this.log(
+					LogLevel.Info,
+					`Ignored duplicate PRE-COMMIT for ${message.nodeHash} in view ${message.viewNumber}.`,
+				);
+				return;
+			}
+
+			this.log(
+				LogLevel.Warning,
+				`Rejected PRE-COMMIT for ${message.nodeHash}: conflicting vote already cast for ${this.preCommitVoteNodeHash} in view ${message.viewNumber}.`,
+			);
+			return;
+		}
+
 		// Accept the PRE-COMMIT evidence as the highest known prepareQC and advance local view.
 		// Adopt the leader's prepareQC as our highest seen and advance view.
 		this.replicaState.prepareQC = message.justify;
@@ -951,6 +1175,13 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			viewNumber: message.viewNumber,
 			senderId: this.id,
 		};
+
+		// Record local PRE-COMMIT vote decision before sending.
+		this.preCommitVoteView = message.viewNumber;
+		this.preCommitVoteNodeHash = message.nodeHash;
+
+		// Mark PRE-COMMIT as accepted so COMMIT can enforce strict ordering.
+		this.recordAcceptedPhase(this.acceptedPreCommitByView, message.viewNumber, message.nodeHash);
 
 		leader.message(vote);
 		this.log(
@@ -996,6 +1227,77 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			return;
 		}
 
+		// Verify the precommitQC before it is allowed to become the replica's lock.
+		if (
+			!this.verifyQuorumCertificate(
+				message.justify,
+				MessageKind.PreCommit,
+				`COMMIT ${message.nodeHash}`,
+			)
+		) {
+			return;
+		}
+
+		// Enforce justify-view consistency: COMMIT message view must match precommitQC view.
+		// This keeps lock updates bound to the same view timeline.
+		if (message.justify.viewNumber !== message.viewNumber) {
+			this.log(
+				LogLevel.Warning,
+				`Rejected COMMIT for ${message.nodeHash}: justify view ${message.justify.viewNumber} != message view ${message.viewNumber}.`,
+			);
+			return;
+		}
+
+		// Enforce strict phase ordering: COMMIT is only valid after PRE-COMMIT acceptance
+		// for the same (view, nodeHash) at this replica.
+		if (
+			!this.hasAcceptedPhase(this.acceptedPreCommitByView, message.viewNumber, message.nodeHash)
+		) {
+			this.log(
+				LogLevel.Warning,
+				`Rejected COMMIT for ${message.nodeHash}: PRE-COMMIT not accepted for view ${message.viewNumber}.`,
+			);
+			return;
+		}
+
+		// COMMIT vote monotonicity across views: never vote again for an older view.
+		if (message.viewNumber < this.commitVoteView) {
+			this.log(
+				LogLevel.Warning,
+				`Rejected COMMIT for ${message.nodeHash}: already voted in newer view ${this.commitVoteView}.`,
+			);
+			return;
+		}
+
+		// COMMIT idempotency/conflict rule within one view.
+		if (message.viewNumber === this.commitVoteView) {
+			if (this.commitVoteNodeHash === message.nodeHash) {
+				this.log(
+					LogLevel.Info,
+					`Ignored duplicate COMMIT for ${message.nodeHash} in view ${message.viewNumber}.`,
+				);
+				return;
+			}
+
+			this.log(
+				LogLevel.Warning,
+				`Rejected COMMIT for ${message.nodeHash}: conflicting vote already cast for ${this.commitVoteNodeHash} in view ${message.viewNumber}.`,
+			);
+			return;
+		}
+
+		// Enforce lock monotonicity: a replica may only move its lock to strictly newer evidence.
+		// This is the protocol invariant `new_precommitQC.viewNumber > lockedQC.viewNumber`.
+		// If the incoming QC is equal or older, we reject before mutating state or emitting a vote.
+		const currentLock = this.replicaState.lockedQC;
+		if (currentLock && message.justify.viewNumber <= currentLock.viewNumber) {
+			this.log(
+				LogLevel.Warning,
+				`Rejected COMMIT for ${message.nodeHash}: non-monotonic lock view ${message.justify.viewNumber} <= current ${currentLock.viewNumber}.`,
+			);
+			return;
+		}
+
 		// Lock on the validated precommitQC and move local view forward.
 		// This is the HotStuff lock update that preserves safety across view changes.
 		this.replicaState.lockedQC = message.justify;
@@ -1016,6 +1318,13 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			viewNumber: message.viewNumber,
 			senderId: this.id,
 		};
+
+		// Record local COMMIT vote decision before sending.
+		this.commitVoteView = message.viewNumber;
+		this.commitVoteNodeHash = message.nodeHash;
+
+		// Mark COMMIT as accepted so DECIDE can enforce strict ordering.
+		this.recordAcceptedPhase(this.acceptedCommitByView, message.viewNumber, message.nodeHash);
 
 		leader.message(vote);
 		this.log(LogLevel.Info, `Voted COMMIT for ${message.nodeHash} (view ${message.viewNumber}).`);
@@ -1059,6 +1368,37 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			message.justify.type !== MessageKind.Commit
 		) {
 			this.log(LogLevel.Warning, `Rejected DECIDE for ${message.nodeHash}: QC mismatch.`);
+			return;
+		}
+
+		// Verify the commitQC before any branch execution is permitted.
+		if (
+			!this.verifyQuorumCertificate(
+				message.justify,
+				MessageKind.Commit,
+				`DECIDE ${message.nodeHash}`,
+			)
+		) {
+			return;
+		}
+
+		// Enforce justify-view consistency: DECIDE message view must match commitQC view.
+		// This prevents finalization of evidence from a different view context.
+		if (message.justify.viewNumber !== message.viewNumber) {
+			this.log(
+				LogLevel.Warning,
+				`Rejected DECIDE for ${message.nodeHash}: justify view ${message.justify.viewNumber} != message view ${message.viewNumber}.`,
+			);
+			return;
+		}
+
+		// Enforce strict phase ordering: DECIDE is only valid after COMMIT acceptance
+		// for the same (view, nodeHash) at this replica.
+		if (!this.hasAcceptedPhase(this.acceptedCommitByView, message.viewNumber, message.nodeHash)) {
+			this.log(
+				LogLevel.Warning,
+				`Rejected DECIDE for ${message.nodeHash}: COMMIT not accepted for view ${message.viewNumber}.`,
+			);
 			return;
 		}
 
@@ -1211,16 +1551,21 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			return; // Need more votes to form a QC
 		}
 
-		// Combine partial signatures into a QC once quorum is met.
+		// Combine votes into a synthetic QC once quorum is met.
+		// The deterministic signature keeps the simulator's verification path local and testable.
 		const qc: QuorumCertificate = {
 			type: vote.voteType,
 			viewNumber: vote.viewNumber,
 			nodeHash: vote.nodeHash,
-			thresholdSig: votesForNode.map((v) => v.partialSig).join("|"),
+			thresholdSig: `qc-${vote.voteType}-${vote.viewNumber}-${vote.nodeHash}`,
 		};
 
 		// Phase transition: PREPARE quorum forms prepareQC and triggers PRE-COMMIT broadcast.
 		if (vote.voteType === MessageKind.Prepare) {
+			// Leader-side phase-order bookkeeping: once prepareQC quorum forms, treat PREPARE as
+			// accepted for (view, nodeHash) locally so self PRE-COMMIT handling can pass strict order checks.
+			this.recordAcceptedPhase(this.acceptedPrepareByView, vote.viewNumber, vote.nodeHash);
+
 			this.replicaState.prepareQC = qc;
 			this.leaderState.prepareQC = qc;
 
@@ -1310,6 +1655,7 @@ function genesisQC(): QuorumCertificate {
 		type: MessageKind.NewView,
 		viewNumber: 0,
 		nodeHash: "GENESIS",
-		thresholdSig: "GENESIS_SIG",
+		// Genesis uses the same synthetic signature pattern as normal QCs so verification stays uniform.
+		thresholdSig: `qc-${MessageKind.NewView}-0-GENESIS`,
 	};
 }

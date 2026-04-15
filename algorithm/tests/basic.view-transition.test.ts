@@ -115,7 +115,7 @@ describe("Basic HotStuff view transition mechanics", () => {
 		if (newView) {
 			expect(newView.viewNumber).toBe(10);
 			expect(newView.senderId).toBe(replica.id);
-			expect(newView.lockedQC.nodeHash).toBe("v9-block");
+			expect(newView.prepareQC.nodeHash).toBe("v9-block");
 		}
 	});
 
@@ -156,7 +156,7 @@ describe("Basic HotStuff view transition mechanics", () => {
 		if (newView) {
 			expect(newView.senderId).toBe(n2.id);
 			expect(newView.viewNumber).toBe(n2.replicaState.viewNumber);
-			expect(newView.lockedQC.nodeHash).toBe("prepared-v3");
+			expect(newView.prepareQC.nodeHash).toBe("prepared-v3");
 		}
 	});
 

@@ -67,14 +67,14 @@ describe("Basic HotStuff NEW-VIEW protocol processing", () => {
 			type: MessageKind.NewView,
 			viewNumber: 1,
 			senderId: n0.id,
-			lockedQC: createQC("block-a", 4, MessageKind.Prepare),
+			prepareQC: createQC("block-a", 4, MessageKind.Prepare),
 			partialSig: "nv-sig-1",
 		};
 		const nv2: NewViewMessage = {
 			type: MessageKind.NewView,
 			viewNumber: 1,
 			senderId: n2.id,
-			lockedQC: createQC("block-b", 5, MessageKind.Prepare),
+			prepareQC: createQC("block-b", 5, MessageKind.Prepare),
 			partialSig: "nv-sig-2",
 		};
 		const duplicateFromN2: NewViewMessage = {
@@ -157,21 +157,21 @@ describe("Basic HotStuff NEW-VIEW protocol processing", () => {
 			type: MessageKind.NewView,
 			viewNumber: 1,
 			senderId: n0.id,
-			lockedQC: lowQC,
+			prepareQC: lowQC,
 			partialSig: "nv-low",
 		};
 		const nv2: NewViewMessage = {
 			type: MessageKind.NewView,
 			viewNumber: 1,
 			senderId: n2.id,
-			lockedQC: highQC,
+			prepareQC: highQC,
 			partialSig: "nv-high",
 		};
 		const nv3: NewViewMessage = {
 			type: MessageKind.NewView,
 			viewNumber: 1,
 			senderId: n3.id,
-			lockedQC: midQC,
+			prepareQC: midQC,
 			partialSig: "nv-mid",
 		};
 
