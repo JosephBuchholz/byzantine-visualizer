@@ -228,7 +228,8 @@ describe("Basic HotStuff explicit network-path scenarios", () => {
 
 		const healedLeader = nodes[healedView % nodes.length]!;
 		for (const sender of nodes) {
-			const carriedPrepareQC = sender.replicaState.prepareQC ?? createQC("GENESIS", 0, MessageKind.NewView);
+			const carriedPrepareQC =
+				sender.replicaState.prepareQC ?? createQC("GENESIS", 0, MessageKind.NewView);
 			const newView: NewViewMessage = {
 				type: MessageKind.NewView,
 				viewNumber: healedView,

@@ -1,28 +1,28 @@
 {
-  "name": "algorithm",
-  "version": "1.0.0",
-  "description": "",
-  "keywords": [],
-  "license": "ISC",
-  "author": "",
-  "type": "module",
-  "main": "dist/index.js",
-  "exports": "./dist/index.js",
-  "scripts": {
-    "build": "tsc -p tsconfig.build.json",
-    "fmt": "oxfmt",
-    "fmt:check": "oxfmt --check",
-    "lint": "oxlint",
-    "lint:fix": "oxlint --fix",
-    "test": "vitest run"
-  },
-  "dependencies": {
-    "better-result": "^2.7.0"
-  },
-  "devDependencies": {
-    "oxfmt": "^0.37.0",
-    "oxlint": "^1.52.0",
-    "typescript": "^5.9.3",
-    "vitest": "^4.0.18"
-  }
+	"name": "algorithm",
+	"version": "1.0.0",
+	"description": "",
+	"keywords": [],
+	"license": "ISC",
+	"author": "",
+	"type": "module",
+	"main": "dist/index.js",
+	"exports": "./dist/index.js",
+	"scripts": {
+		"build": "tsc -p tsconfig.build.json",
+		"fmt": "oxfmt",
+		"fmt:check": "oxfmt --check",
+		"lint": "oxlint",
+		"lint:fix": "oxlint --fix",
+		"test": "vitest run"
+	},
+	"dependencies": {
+		"better-result": "^2.7.0"
+	},
+	"devDependencies": {
+		"oxfmt": "^0.37.0",
+		"oxlint": "^1.52.0",
+		"typescript": "^5.9.3",
+		"vitest": "^4.0.18"
+	}
 }
