@@ -72,6 +72,8 @@ describe("Basic HotStuff lock monotonicity", () => {
 			nodeHash: "candidate-view-8",
 			justify: createQC("candidate-view-8", 8, MessageKind.PreCommit),
 		};
+		// Seed prior PRE-COMMIT acceptance so this test isolates lock monotonicity behavior.
+		follower.acceptedPreCommitByView.set(8, new Set(["candidate-view-8"]));
 
 		follower.message(equalViewCommit);
 
@@ -111,6 +113,8 @@ describe("Basic HotStuff lock monotonicity", () => {
 			nodeHash: "candidate-view-7",
 			justify: createQC("candidate-view-7", 7, MessageKind.PreCommit),
 		};
+		// Seed prior PRE-COMMIT acceptance so this test isolates lock monotonicity behavior.
+		follower.acceptedPreCommitByView.set(9, new Set(["candidate-view-7"]));
 
 		follower.message(lowerViewCommit);
 
@@ -151,6 +155,8 @@ describe("Basic HotStuff lock monotonicity", () => {
 			nodeHash: "candidate-view-9",
 			justify: higherViewQC,
 		};
+		// Seed prior PRE-COMMIT acceptance so this test isolates lock monotonicity behavior.
+		follower.acceptedPreCommitByView.set(9, new Set(["candidate-view-9"]));
 
 		follower.message(higherViewCommit);
 

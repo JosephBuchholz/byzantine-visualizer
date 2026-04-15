@@ -63,6 +63,8 @@ describe("Basic HotStuff per-phase vote memory", () => {
 		const nodes = [follower, n1, leaderForV2, n3] as const;
 
 		follower.replicaState.viewNumber = 2;
+		// Seed prior PREPARE acceptance for both candidates so this test isolates PRE-COMMIT vote memory.
+		follower.acceptedPrepareByView.set(2, new Set(["pc-v2-A", "pc-v2-B"]));
 
 		const preCommitA: PreCommitMessage = {
 			type: MessageKind.PreCommit,
@@ -109,6 +111,9 @@ describe("Basic HotStuff per-phase vote memory", () => {
 		const nodes = [follower, n1, leaderForV2, leaderForV3] as const;
 
 		follower.replicaState.viewNumber = 2;
+		// Seed prior PREPARE acceptance per view so this test isolates cross-view PRE-COMMIT vote memory.
+		follower.acceptedPrepareByView.set(2, new Set(["pc-v2"]));
+		follower.acceptedPrepareByView.set(3, new Set(["pc-v3"]));
 
 		follower.message({
 			type: MessageKind.PreCommit,
@@ -157,6 +162,8 @@ describe("Basic HotStuff per-phase vote memory", () => {
 		const nodes = [follower, n1, leaderForV2, n3] as const;
 
 		follower.replicaState.viewNumber = 2;
+		// Seed prior PRE-COMMIT acceptance for both candidates so this test isolates COMMIT vote memory.
+		follower.acceptedPreCommitByView.set(2, new Set(["c-v2-A", "c-v2-B"]));
 
 		const commitA: CommitMessage = {
 			type: MessageKind.Commit,
@@ -203,6 +210,9 @@ describe("Basic HotStuff per-phase vote memory", () => {
 		const nodes = [follower, n1, leaderForV2, leaderForV3] as const;
 
 		follower.replicaState.viewNumber = 2;
+		// Seed prior PRE-COMMIT acceptance per view so this test isolates cross-view COMMIT vote memory.
+		follower.acceptedPreCommitByView.set(2, new Set(["c-v2"]));
+		follower.acceptedPreCommitByView.set(3, new Set(["c-v3"]));
 
 		follower.message({
 			type: MessageKind.Commit,

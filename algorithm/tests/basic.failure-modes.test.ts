@@ -126,6 +126,10 @@ describe("Basic HotStuff explicit failure-mode simulations", () => {
 			justify: createQC(blockB.hash, 2, MessageKind.Commit),
 		};
 
+		// Seed prior COMMIT acceptance so this test isolates forged-QC safety divergence behavior.
+		r0.acceptedCommitByView.set(2, new Set([blockA.hash]));
+		r1.acceptedCommitByView.set(2, new Set([blockB.hash]));
+
 		r0.message(decideA);
 		r1.message(decideB);
 

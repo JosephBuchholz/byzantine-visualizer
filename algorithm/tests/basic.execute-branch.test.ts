@@ -177,6 +177,8 @@ describe("Basic HotStuff committed-branch execution semantics", () => {
 			nodeHash: "C",
 			justify: createQC("C", 20, MessageKind.Commit),
 		};
+		// Seed prior COMMIT acceptance so this test isolates DECIDE branch execution behavior.
+		follower.acceptedCommitByView.set(20, new Set(["C"]));
 
 		follower.message(decideC);
 
@@ -250,6 +252,8 @@ describe("Basic HotStuff committed-branch execution semantics", () => {
 			nodeHash: "D",
 			justify: createQC("D", 21, MessageKind.Commit),
 		};
+		// Seed prior COMMIT acceptance so this test isolates DECIDE suffix execution behavior.
+		follower.acceptedCommitByView.set(21, new Set(["D"]));
 
 		follower.message(decideD);
 

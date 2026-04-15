@@ -60,6 +60,15 @@ export default class BasicHotStuffNode implements HotStuffNode {
 	// COMMIT per-phase vote memory (same structure as PREPARE voting memory).
 	commitVoteView = -1;
 	commitVoteNodeHash: string | null = null;
+	// Tracks which nodes this replica has accepted in PREPARE for each view.
+	// Used to enforce strict phase ordering before PRE-COMMIT can be accepted.
+	acceptedPrepareByView: Map<number, Set<string>> = new Map();
+	// Tracks which nodes this replica has accepted in PRE-COMMIT for each view.
+	// Used to enforce strict phase ordering before COMMIT can be accepted.
+	acceptedPreCommitByView: Map<number, Set<string>> = new Map();
+	// Tracks which nodes this replica has accepted in COMMIT for each view.
+	// Used to enforce strict phase ordering before DECIDE can be accepted.
+	acceptedCommitByView: Map<number, Set<string>> = new Map();
 
 	abortResolver: (() => void) | null = null;
 	pauseController: Promise<void> | null = null;
@@ -610,6 +619,37 @@ export default class BasicHotStuffNode implements HotStuffNode {
 	}
 
 	/**
+	 * Record that a phase message for (view, nodeHash) was accepted by this replica.
+	 * How it works: lazily creates a set for the view, then inserts nodeHash.
+	 */
+	private recordAcceptedPhase(
+		store: Map<number, Set<string>>,
+		viewNumber: number,
+		nodeHash: string,
+	): void {
+		let acceptedInView = store.get(viewNumber);
+		if (!acceptedInView) {
+			acceptedInView = new Set<string>();
+			store.set(viewNumber, acceptedInView);
+		}
+
+		acceptedInView.add(nodeHash);
+	}
+
+	/**
+	 * Check whether a prior phase has already been accepted for (view, nodeHash).
+	 * How it works: reads the per-view set and returns true only when the exact nodeHash exists.
+	 */
+	private hasAcceptedPhase(
+		store: Map<number, Set<string>>,
+		viewNumber: number,
+		nodeHash: string,
+	): boolean {
+		const acceptedInView = store.get(viewNumber);
+		return acceptedInView?.has(nodeHash) ?? false;
+	}
+
+	/**
 	 * Leader-only NEW-VIEW intake.
 	 * Collects view-change evidence for the current view and deduplicates by sender
 	 * so one replica cannot inflate quorum counts.
@@ -941,6 +981,13 @@ export default class BasicHotStuffNode implements HotStuffNode {
 		this.prepareVoteView = message.viewNumber;
 		this.prepareVoteNodeHash = message.node.block.hash;
 
+		// Mark PREPARE as accepted so later phases can enforce strict ordering for this node/view.
+		this.recordAcceptedPhase(
+			this.acceptedPrepareByView,
+			message.viewNumber,
+			message.node.block.hash,
+		);
+
 		leader.message(vote);
 		this.log(
 			LogLevel.Info,
@@ -988,6 +1035,26 @@ export default class BasicHotStuffNode implements HotStuffNode {
 
 		// Verify the prepareQC before it is accepted into replica state.
 		if (!this.verifyQuorumCertificate(message.justify, MessageKind.Prepare, `PRE-COMMIT ${message.nodeHash}`)) {
+			return;
+		}
+
+		// Enforce justify-view consistency: PRE-COMMIT message view must match prepareQC view.
+		// This prevents mixing phase evidence from different views in a single transition.
+		if (message.justify.viewNumber !== message.viewNumber) {
+			this.log(
+				LogLevel.Warning,
+				`Rejected PRE-COMMIT for ${message.nodeHash}: justify view ${message.justify.viewNumber} != message view ${message.viewNumber}.`,
+			);
+			return;
+		}
+
+		// Enforce strict phase ordering: PRE-COMMIT is only valid after PREPARE acceptance
+		// for the same (view, nodeHash) at this replica.
+		if (!this.hasAcceptedPhase(this.acceptedPrepareByView, message.viewNumber, message.nodeHash)) {
+			this.log(
+				LogLevel.Warning,
+				`Rejected PRE-COMMIT for ${message.nodeHash}: PREPARE not accepted for view ${message.viewNumber}.`,
+			);
 			return;
 		}
 
@@ -1041,6 +1108,9 @@ export default class BasicHotStuffNode implements HotStuffNode {
 		this.preCommitVoteView = message.viewNumber;
 		this.preCommitVoteNodeHash = message.nodeHash;
 
+		// Mark PRE-COMMIT as accepted so COMMIT can enforce strict ordering.
+		this.recordAcceptedPhase(this.acceptedPreCommitByView, message.viewNumber, message.nodeHash);
+
 		leader.message(vote);
 		this.log(
 			LogLevel.Info,
@@ -1087,6 +1157,26 @@ export default class BasicHotStuffNode implements HotStuffNode {
 
 		// Verify the precommitQC before it is allowed to become the replica's lock.
 		if (!this.verifyQuorumCertificate(message.justify, MessageKind.PreCommit, `COMMIT ${message.nodeHash}`)) {
+			return;
+		}
+
+		// Enforce justify-view consistency: COMMIT message view must match precommitQC view.
+		// This keeps lock updates bound to the same view timeline.
+		if (message.justify.viewNumber !== message.viewNumber) {
+			this.log(
+				LogLevel.Warning,
+				`Rejected COMMIT for ${message.nodeHash}: justify view ${message.justify.viewNumber} != message view ${message.viewNumber}.`,
+			);
+			return;
+		}
+
+		// Enforce strict phase ordering: COMMIT is only valid after PRE-COMMIT acceptance
+		// for the same (view, nodeHash) at this replica.
+		if (!this.hasAcceptedPhase(this.acceptedPreCommitByView, message.viewNumber, message.nodeHash)) {
+			this.log(
+				LogLevel.Warning,
+				`Rejected COMMIT for ${message.nodeHash}: PRE-COMMIT not accepted for view ${message.viewNumber}.`,
+			);
 			return;
 		}
 
@@ -1153,6 +1243,9 @@ export default class BasicHotStuffNode implements HotStuffNode {
 		this.commitVoteView = message.viewNumber;
 		this.commitVoteNodeHash = message.nodeHash;
 
+		// Mark COMMIT as accepted so DECIDE can enforce strict ordering.
+		this.recordAcceptedPhase(this.acceptedCommitByView, message.viewNumber, message.nodeHash);
+
 		leader.message(vote);
 		this.log(LogLevel.Info, `Voted COMMIT for ${message.nodeHash} (view ${message.viewNumber}).`);
 	}
@@ -1200,6 +1293,26 @@ export default class BasicHotStuffNode implements HotStuffNode {
 
 		// Verify the commitQC before any branch execution is permitted.
 		if (!this.verifyQuorumCertificate(message.justify, MessageKind.Commit, `DECIDE ${message.nodeHash}`)) {
+			return;
+		}
+
+		// Enforce justify-view consistency: DECIDE message view must match commitQC view.
+		// This prevents finalization of evidence from a different view context.
+		if (message.justify.viewNumber !== message.viewNumber) {
+			this.log(
+				LogLevel.Warning,
+				`Rejected DECIDE for ${message.nodeHash}: justify view ${message.justify.viewNumber} != message view ${message.viewNumber}.`,
+			);
+			return;
+		}
+
+		// Enforce strict phase ordering: DECIDE is only valid after COMMIT acceptance
+		// for the same (view, nodeHash) at this replica.
+		if (!this.hasAcceptedPhase(this.acceptedCommitByView, message.viewNumber, message.nodeHash)) {
+			this.log(
+				LogLevel.Warning,
+				`Rejected DECIDE for ${message.nodeHash}: COMMIT not accepted for view ${message.viewNumber}.`,
+			);
 			return;
 		}
 
@@ -1363,6 +1476,10 @@ export default class BasicHotStuffNode implements HotStuffNode {
 
 		// Phase transition: PREPARE quorum forms prepareQC and triggers PRE-COMMIT broadcast.
 		if (vote.voteType === MessageKind.Prepare) {
+			// Leader-side phase-order bookkeeping: once prepareQC quorum forms, treat PREPARE as
+			// accepted for (view, nodeHash) locally so self PRE-COMMIT handling can pass strict order checks.
+			this.recordAcceptedPhase(this.acceptedPrepareByView, vote.viewNumber, vote.nodeHash);
+
 			this.replicaState.prepareQC = qc;
 			this.leaderState.prepareQC = qc;
 
