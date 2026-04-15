@@ -54,6 +54,12 @@ export default class BasicHotStuffNode implements HotStuffNode {
 	// Tracks which proposal hash this replica already voted for in prepareVoteView.
 	// This prevents conflicting votes inside the same view.
 	prepareVoteNodeHash: string | null = null;
+	// PRE-COMMIT per-phase vote memory (same structure as PREPARE voting memory).
+	preCommitVoteView = -1;
+	preCommitVoteNodeHash: string | null = null;
+	// COMMIT per-phase vote memory (same structure as PREPARE voting memory).
+	commitVoteView = -1;
+	commitVoteNodeHash: string | null = null;
 
 	abortResolver: (() => void) | null = null;
 	pauseController: Promise<void> | null = null;
@@ -971,6 +977,32 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			return;
 		}
 
+		// PRE-COMMIT vote monotonicity across views: never vote again for an older view.
+		if (message.viewNumber < this.preCommitVoteView) {
+			this.log(
+				LogLevel.Warning,
+				`Rejected PRE-COMMIT for ${message.nodeHash}: already voted in newer view ${this.preCommitVoteView}.`,
+			);
+			return;
+		}
+
+		// PRE-COMMIT idempotency/conflict rule within one view.
+		if (message.viewNumber === this.preCommitVoteView) {
+			if (this.preCommitVoteNodeHash === message.nodeHash) {
+				this.log(
+					LogLevel.Info,
+					`Ignored duplicate PRE-COMMIT for ${message.nodeHash} in view ${message.viewNumber}.`,
+				);
+				return;
+			}
+
+			this.log(
+				LogLevel.Warning,
+				`Rejected PRE-COMMIT for ${message.nodeHash}: conflicting vote already cast for ${this.preCommitVoteNodeHash} in view ${message.viewNumber}.`,
+			);
+			return;
+		}
+
 		// Accept the PRE-COMMIT evidence as the highest known prepareQC and advance local view.
 		// Adopt the leader's prepareQC as our highest seen and advance view.
 		this.replicaState.prepareQC = message.justify;
@@ -990,6 +1022,10 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			viewNumber: message.viewNumber,
 			senderId: this.id,
 		};
+
+		// Record local PRE-COMMIT vote decision before sending.
+		this.preCommitVoteView = message.viewNumber;
+		this.preCommitVoteNodeHash = message.nodeHash;
 
 		leader.message(vote);
 		this.log(
@@ -1040,6 +1076,32 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			return;
 		}
 
+		// COMMIT vote monotonicity across views: never vote again for an older view.
+		if (message.viewNumber < this.commitVoteView) {
+			this.log(
+				LogLevel.Warning,
+				`Rejected COMMIT for ${message.nodeHash}: already voted in newer view ${this.commitVoteView}.`,
+			);
+			return;
+		}
+
+		// COMMIT idempotency/conflict rule within one view.
+		if (message.viewNumber === this.commitVoteView) {
+			if (this.commitVoteNodeHash === message.nodeHash) {
+				this.log(
+					LogLevel.Info,
+					`Ignored duplicate COMMIT for ${message.nodeHash} in view ${message.viewNumber}.`,
+				);
+				return;
+			}
+
+			this.log(
+				LogLevel.Warning,
+				`Rejected COMMIT for ${message.nodeHash}: conflicting vote already cast for ${this.commitVoteNodeHash} in view ${message.viewNumber}.`,
+			);
+			return;
+		}
+
 		// Enforce lock monotonicity: a replica may only move its lock to strictly newer evidence.
 		// This is the protocol invariant `new_precommitQC.viewNumber > lockedQC.viewNumber`.
 		// If the incoming QC is equal or older, we reject before mutating state or emitting a vote.
@@ -1072,6 +1134,10 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			viewNumber: message.viewNumber,
 			senderId: this.id,
 		};
+
+		// Record local COMMIT vote decision before sending.
+		this.commitVoteView = message.viewNumber;
+		this.commitVoteNodeHash = message.nodeHash;
 
 		leader.message(vote);
 		this.log(LogLevel.Info, `Voted COMMIT for ${message.nodeHash} (view ${message.viewNumber}).`);
