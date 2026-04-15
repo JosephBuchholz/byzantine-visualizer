@@ -575,12 +575,46 @@ export default class BasicHotStuffNode implements HotStuffNode {
 	}
 
 	/**
+	 * Verify a QC using the simulator's deterministic signature convention.
+	 * The simulator does not implement real threshold cryptography here; instead it checks that
+	 * the QC is self-consistent and that its synthetic signature matches the expected pattern.
+	 */
+	private verifyQuorumCertificate(
+		qc: QuorumCertificate,
+		expectedType: MessageKind,
+		context: string,
+	): boolean {
+		// A QC can only be accepted when its phase matches the phase the caller expects.
+		if (qc.type !== expectedType) {
+			this.log(
+				LogLevel.Warning,
+				`Rejected QC in ${context}: expected type ${expectedType} but saw ${qc.type}.`,
+			);
+			return false;
+		}
+
+		// The simulator encodes valid QCs with a deterministic string so tests can model invalid ones.
+		const expectedThresholdSig = `qc-${qc.type}-${qc.viewNumber}-${qc.nodeHash}`;
+		if (qc.thresholdSig !== expectedThresholdSig) {
+			this.log(LogLevel.Warning, `Rejected QC in ${context}: invalid threshold signature.`);
+			return false;
+		}
+
+		return true;
+	}
+
+	/**
 	 * Leader-only NEW-VIEW intake.
 	 * Collects view-change evidence for the current view and deduplicates by sender
 	 * so one replica cannot inflate quorum counts.
 	 */
 	private handleNewViewMessage(message: NewViewMessage): void {
 		if (!this.leaderState) {
+			return;
+		}
+
+		// Reject invalid evidence before it can affect leader state or highQC selection.
+		if (!this.verifyQuorumCertificate(message.lockedQC, message.lockedQC.type, "NEW-VIEW evidence")) {
 			return;
 		}
 
@@ -932,6 +966,11 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			return;
 		}
 
+		// Verify the prepareQC before it is accepted into replica state.
+		if (!this.verifyQuorumCertificate(message.justify, MessageKind.Prepare, `PRE-COMMIT ${message.nodeHash}`)) {
+			return;
+		}
+
 		// Accept the PRE-COMMIT evidence as the highest known prepareQC and advance local view.
 		// Adopt the leader's prepareQC as our highest seen and advance view.
 		this.replicaState.prepareQC = message.justify;
@@ -993,6 +1032,11 @@ export default class BasicHotStuffNode implements HotStuffNode {
 		// Reject malformed COMMIT evidence where the carried QC does not certify the target node.
 		if (message.justify.nodeHash !== message.nodeHash) {
 			this.log(LogLevel.Warning, `Rejected COMMIT for ${message.nodeHash}: QC mismatch.`);
+			return;
+		}
+
+		// Verify the precommitQC before it is allowed to become the replica's lock.
+		if (!this.verifyQuorumCertificate(message.justify, MessageKind.PreCommit, `COMMIT ${message.nodeHash}`)) {
 			return;
 		}
 
@@ -1059,6 +1103,11 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			message.justify.type !== MessageKind.Commit
 		) {
 			this.log(LogLevel.Warning, `Rejected DECIDE for ${message.nodeHash}: QC mismatch.`);
+			return;
+		}
+
+		// Verify the commitQC before any branch execution is permitted.
+		if (!this.verifyQuorumCertificate(message.justify, MessageKind.Commit, `DECIDE ${message.nodeHash}`)) {
 			return;
 		}
 
@@ -1211,12 +1260,13 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			return; // Need more votes to form a QC
 		}
 
-		// Combine partial signatures into a QC once quorum is met.
+		// Combine votes into a synthetic QC once quorum is met.
+		// The deterministic signature keeps the simulator's verification path local and testable.
 		const qc: QuorumCertificate = {
 			type: vote.voteType,
 			viewNumber: vote.viewNumber,
 			nodeHash: vote.nodeHash,
-			thresholdSig: votesForNode.map((v) => v.partialSig).join("|"),
+			thresholdSig: `qc-${vote.voteType}-${vote.viewNumber}-${vote.nodeHash}`,
 		};
 
 		// Phase transition: PREPARE quorum forms prepareQC and triggers PRE-COMMIT broadcast.
@@ -1310,6 +1360,7 @@ function genesisQC(): QuorumCertificate {
 		type: MessageKind.NewView,
 		viewNumber: 0,
 		nodeHash: "GENESIS",
-		thresholdSig: "GENESIS_SIG",
+		// Genesis uses the same synthetic signature pattern as normal QCs so verification stays uniform.
+		thresholdSig: `qc-${MessageKind.NewView}-0-GENESIS`,
 	};
 }
