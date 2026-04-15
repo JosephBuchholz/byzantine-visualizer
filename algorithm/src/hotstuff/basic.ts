@@ -48,6 +48,9 @@ export default class BasicHotStuffNode implements HotStuffNode {
 	stepsWithoutProgress = 0;
 	timeoutBackoffExponent = 0;
 	suppressTimeoutForView: number | null = null;
+	// Tracks the last view where this node already proposed a block.
+	// Used to prevent repeated proposals in the same view when retry buffers are rehydrated.
+	lastProposedView = -1;
 	// vheight-style local voting memory: highest view this replica has voted PREPARE in.
 	// This enforces monotonic voting and blocks stale re-votes.
 	prepareVoteView = -1;
@@ -311,13 +314,22 @@ export default class BasicHotStuffNode implements HotStuffNode {
 				}
 			}
 
+			// Leader reliability path:
+			// If unresolved client operations exist but transient pendingWrites is empty (e.g., prior
+			// proposal did not finalize under partition), rebuild pendingWrites so the leader can retry
+			// proposal in later views.
+			if (this.pendingWrites.size === 0) {
+				this.rehydratePendingWritesFromUnresolvedOperations();
+			}
+
 			this.lastWriteBatch ??= { lastBatchTime: new Date(), writes: [] };
 
 			const elapsedSinceLastBatch = Date.now() - this.lastWriteBatch.lastBatchTime.getTime();
 			const batchDue =
 				this.pendingWrites.size >= this.config.maxBatchSize ||
 				elapsedSinceLastBatch >= this.config.maxBatchWaitTimeMs;
-			if (this.pendingWrites.size > 0 && batchDue) {
+			const alreadyProposedInThisView = this.lastProposedView === this.replicaState.viewNumber;
+			if (this.pendingWrites.size > 0 && batchDue && !alreadyProposedInThisView) {
 				this.log(
 					LogLevel.Info,
 					`Creating new proposal with ${this.pendingWrites.size} data store messages.`,
@@ -338,6 +350,14 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			return;
 		}
 
+		// Follower reliability path:
+		// If prior forwards/proposals were lost (e.g., pre-GST partition), unresolved client
+		// operations still exist in pendingOperations. Rehydrate pendingWrites from that unresolved
+		// intent so follower nodes can retry forwarding after leadership/view/network changes.
+		if (this.pendingWrites.size === 0) {
+			this.rehydratePendingWritesFromUnresolvedOperations();
+		}
+
 		// If not leader, forward pending writes to leader
 		if (this.pendingWrites.size > 0) {
 			const leader = this.findLeader(nodes);
@@ -346,20 +366,27 @@ export default class BasicHotStuffNode implements HotStuffNode {
 				`Forwarding ${this.pendingWrites.size} pending writes to leader (Node ${leader.id}).`,
 			);
 
-			// Forward pending writes to leader
+			// Forward pending writes to leader.
+			// Important: forwarding must enqueue proposal intent on the leader without creating a
+			// new client completion promise there. Using leader.put/delete for retries would append
+			// redundant pendingOperations on every forward attempt and can stall liveness.
+			const concreteLeader = leader instanceof BasicHotStuffNode ? leader : null;
+
 			for (const [key, value] of this.pendingWrites.entries()) {
 				// Forward semantics are based on explicit null, not truthiness.
 				// This preserves valid empty-string writes ("") as writes instead of misclassifying
 				// them as deletes, which keeps visualization state faithful to client intent.
-				if (value === null) {
-					// Do not await commit-aware completion here: forwarding should only enqueue work
-					// on the leader and return immediately so the simulation loop cannot deadlock.
-					void leader.delete(key);
+				if (concreteLeader) {
+					concreteLeader.pendingWrites.set(key, value);
 					continue;
 				}
 
-				// Do not await commit-aware completion here for the same reason as above.
-				// The caller's own completion promise resolves later when DECIDE executes locally.
+				// Fallback path for non-BasicHotStuffNode peers (defensive for interface usage).
+				// We still avoid awaiting so forwarding remains non-blocking for the simulation loop.
+				if (value === null) {
+					void leader.delete(key);
+					continue;
+				}
 				void leader.put(key, value);
 			}
 
@@ -371,11 +398,48 @@ export default class BasicHotStuffNode implements HotStuffNode {
 		this.maybeTimeoutToNextView(nodes, madeProgress);
 	}
 
+	/**
+	 * Rebuild pendingWrites from unresolved client operations.
+	 *
+	 * Why this exists:
+	 * - pendingWrites is a transient outbound buffer and is intentionally cleared after forward/propose.
+	 * - pendingOperations tracks commit-aware unresolved client intent.
+	 * - During partitions, forwarded messages can be dropped; rebuilding from unresolved intent lets
+	 *   followers retry automatically after timeout/view changes and after network healing.
+	 *
+	 * How it works:
+	 * 1) Iterate unresolved operations in submission order.
+	 * 2) Keep the latest value per key in a temporary map (matches existing pendingWrites semantics).
+	 * 3) Reinsert only keys not currently present in pendingWrites.
+	 */
+	private rehydratePendingWritesFromUnresolvedOperations(): void {
+		if (this.pendingOperations.length === 0) {
+			return;
+		}
+
+		const latestByKey = new Map<string, string | null>();
+		for (const operation of this.pendingOperations) {
+			latestByKey.set(operation.key, operation.value);
+		}
+
+		for (const [key, value] of latestByKey.entries()) {
+			if (this.pendingWrites.has(key)) {
+				continue;
+			}
+			this.pendingWrites.set(key, value);
+		}
+	}
+
 	/** Leader-only: build a block from pending writes and broadcast a Prepare. */
 	private propose(nodes: readonly Readonly<HotStuffNode>[]) {
 		if (!this.lastWriteBatch) {
 			return;
 		}
+
+		// Record that this view has already produced a proposal from this leader.
+		// Retry logic may rehydrate pending writes, but this guard keeps at most one proposal
+		// per view and avoids same-view proposal churn.
+		this.lastProposedView = this.replicaState.viewNumber;
 
 		// For the parent hash, we use the prepareQC's node hash if it exists,
 		// otherwise we fall back to the lockedQC's node hash.

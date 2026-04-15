@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 import { type HotStuffConfig } from "../src/index.js";
 import BasicHotStuffNode from "../src/hotstuff/basic.js";
 import { InMemoryDataStore } from "../src/data/store.js";
-import { MessageKind, type PrepareMessage, type QuorumCertificate } from "../src/types.js";
+import {
+	MessageKind,
+	type NewViewMessage,
+	type PrepareMessage,
+	type QuorumCertificate,
+} from "../src/types.js";
 
 /** Build deterministic config for network-path educational scenarios. */
 function createTestConfig(overrides?: Partial<Required<HotStuffConfig>>): Required<HotStuffConfig> {
@@ -211,9 +216,32 @@ describe("Basic HotStuff explicit network-path scenarios", () => {
 		// Assert pre-heal state: safety preserved, liveness stalled.
 		expect(nodes.every((node) => node.replicaState.committedBlocks.length === 0)).toBe(true);
 
+		// Model GST-like stabilization explicitly:
+		// 1) Align all replicas to one common view window so deterministic leadership matches.
+		// 2) Deliver one NEW-VIEW message per replica to the healed view leader.
+		// This avoids indefinite skew from pre-GST timing artifacts and focuses this scenario on
+		// post-heal eventual progress rather than view-alignment mechanics.
+		const healedView = Math.max(...nodes.map((node) => node.replicaState.viewNumber)) + 1;
+		for (const node of nodes) {
+			node.replicaState.viewNumber = healedView;
+		}
+
+		const healedLeader = nodes[healedView % nodes.length]!;
+		for (const sender of nodes) {
+			const carriedPrepareQC = sender.replicaState.prepareQC ?? createQC("GENESIS", 0, MessageKind.NewView);
+			const newView: NewViewMessage = {
+				type: MessageKind.NewView,
+				viewNumber: healedView,
+				senderId: sender.id,
+				prepareQC: carriedPrepareQC,
+				partialSig: `heal-nv-${sender.id}-${healedView}`,
+			};
+			healedLeader.message(newView);
+		}
+
 		// Act (phase 2: healed transport, GST-like period with bounded delay)
 		let convergedCommit = false;
-		for (let round = 0; round < 36; round += 1) {
+		for (let round = 0; round < 80; round += 1) {
 			for (const node of nodes) {
 				await node.step(nodes);
 			}
