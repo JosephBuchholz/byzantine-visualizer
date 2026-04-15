@@ -173,9 +173,22 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			return Result.err(FailState.NoNodesDefined);
 		}
 
+		// First ensure the provided runtime node array matches declared config size.
+		// This existing guard should run before model-shape validation so caller mistakes
+		// are reported as a simple size mismatch.
 		if (nodes.length !== this.config.numNodes) {
 			this.log(LogLevel.Error, `Expected ${this.config.numNodes} nodes, but got ${nodes.length}.`);
 			return Result.err(FailState.NodeSizeConfigMismatch);
+		}
+
+		// Enforce Basic HotStuff system model: n must satisfy n = 3f + 1 for some integer f >= 0.
+		// Equivalent arithmetic check: n % 3 === 1 with n >= 1.
+		if (!this.isValidHotStuffSystemSize(this.config.numNodes)) {
+			this.log(
+				LogLevel.Error,
+				`Invalid system size n=${this.config.numNodes}. Basic HotStuff requires n = 3f + 1.`,
+			);
+			return Result.err(FailState.InvalidSystemModelSize);
 		}
 
 		// Initialize role based on the current view before entering the run loop.
@@ -367,7 +380,9 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			hash: blockHash(this.id, this.replicaState.viewNumber, parentHash, blockData),
 			parentHash,
 			data: blockData,
-			height: this.replicaState.committedBlocks.length + 1,
+			// Derive visual/tree height from the parent chain, not commit count.
+			// This keeps block geometry correct for uncommitted and forked branches.
+			height: this.computeChildHeightFromParent(parentHash),
 		};
 
 		// Cache proposed blocks by hash so DECIDE can later execute their writes locally.
@@ -410,6 +425,36 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			},
 			nodes,
 		);
+	}
+
+	/**
+	 * Compute the height for a newly proposed child block from its selected parent hash.
+	 *
+	 * Rules:
+	 * 1) If parent is GENESIS, this is the first layer and child height is 1.
+	 * 2) If parent exists locally, child height is parent.height + 1.
+	 * 3) If parent is unexpectedly missing, fall back to 1 to keep simulation progress
+	 *    safe while logging a warning for visibility.
+	 */
+	private computeChildHeightFromParent(parentHash: string): number {
+		// Genesis proposals always start the tree at height 1.
+		if (parentHash === "GENESIS") {
+			return 1;
+		}
+
+		// For non-genesis proposals, recover parent height from the known local block tree.
+		const parentBlock = this.knownBlocksByHash.get(parentHash);
+		if (parentBlock) {
+			return parentBlock.height + 1;
+		}
+
+		// Missing ancestry should be rare, but fallback avoids crashing the simulation loop.
+		// We still emit a warning so this state is discoverable during debugging/testing.
+		this.log(
+			LogLevel.Warning,
+			`Parent block ${parentHash} not found while proposing; defaulting child height to 1.`,
+		);
+		return 1;
 	}
 
 	/**
@@ -502,6 +547,23 @@ export default class BasicHotStuffNode implements HotStuffNode {
 	private quorumSize(): number {
 		// Quorum rule: need 2f+1 = floor(2n/3)+1 votes to form a QC.
 		return Math.floor((this.config.numNodes * 2) / 3) + 1;
+	}
+
+	/**
+	 * Validate that replica count matches the Basic HotStuff fault model shape n = 3f + 1.
+	 *
+	 * Why this exists:
+	 * - Quorum math and safety/liveness reasoning assume this exact family of sizes.
+	 * - Rejecting invalid n values avoids misleading "valid" simulator runs.
+	 */
+	private isValidHotStuffSystemSize(numNodes: number): boolean {
+		// Defensive lower bound: model requires at least one replica.
+		if (numNodes < 1) {
+			return false;
+		}
+
+		// Arithmetic form of n = 3f + 1: exactly numbers congruent to 1 modulo 3.
+		return numNodes % 3 === 1;
 	}
 
 	/** Utility: find a peer by id within the provided node list. */

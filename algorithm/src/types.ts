@@ -160,4 +160,5 @@ export enum LogLevel {
 export enum FailState {
 	NoNodesDefined,
 	NodeSizeConfigMismatch,
+	InvalidSystemModelSize,
 }
