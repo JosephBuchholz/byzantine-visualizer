@@ -1040,6 +1040,18 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			return;
 		}
 
+		// Enforce lock monotonicity: a replica may only move its lock to strictly newer evidence.
+		// This is the protocol invariant `new_precommitQC.viewNumber > lockedQC.viewNumber`.
+		// If the incoming QC is equal or older, we reject before mutating state or emitting a vote.
+		const currentLock = this.replicaState.lockedQC;
+		if (currentLock && message.justify.viewNumber <= currentLock.viewNumber) {
+			this.log(
+				LogLevel.Warning,
+				`Rejected COMMIT for ${message.nodeHash}: non-monotonic lock view ${message.justify.viewNumber} <= current ${currentLock.viewNumber}.`,
+			);
+			return;
+		}
+
 		// Lock on the validated precommitQC and move local view forward.
 		// This is the HotStuff lock update that preserves safety across view changes.
 		this.replicaState.lockedQC = message.justify;
