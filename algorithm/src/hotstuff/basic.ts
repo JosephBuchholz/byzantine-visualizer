@@ -878,6 +878,20 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			return;
 		}
 
+		// Verify the PREPARE justification QC before any acceptance logic mutates local state.
+		// How it works: this checks the simulator's deterministic threshold-signature format
+		// for the exact QC tuple carried by the proposal. If invalid, we reject immediately
+		// so the replica cannot adopt untrusted prepare evidence or emit a PREPARE vote.
+		if (
+			!this.verifyQuorumCertificate(
+				message.node.justify,
+				message.node.justify.type,
+				`PREPARE justify ${message.node.block.hash}`,
+			)
+		) {
+			return;
+		}
+
 		// Structural validity: proposed node must directly extend the QC it justifies.
 		const extendsJustify = message.node.parentHash === message.node.justify.nodeHash;
 		if (!extendsJustify) {
