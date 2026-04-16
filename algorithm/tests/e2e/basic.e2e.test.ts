@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { type HotStuffConfig } from "../src/index.js";
-import BasicHotStuffNode from "../src/hotstuff/basic.js";
-import { InMemoryDataStore } from "../src/data/store.js";
+import { type HotStuffConfig } from "../../src/index.js";
+import BasicHotStuffNode from "../../src/hotstuff/basic.js";
+import { InMemoryDataStore } from "../../src/data/store.js";
 import {
 	MessageKind,
 	type CommitMessage,
@@ -10,7 +10,7 @@ import {
 	type PreCommitMessage,
 	type PrepareMessage,
 	type QuorumCertificate,
-} from "../src/types.js";
+} from "../../src/types.js";
 
 /** Build a deterministic config for end-to-end protocol scenarios. */
 function createTestConfig(numNodes = 3): Required<HotStuffConfig> {

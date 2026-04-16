@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { type HotStuffConfig } from "../src/index.js";
-import BasicHotStuffNode from "../src/hotstuff/basic.js";
-import { InMemoryDataStore } from "../src/data/store.js";
-import { MessageKind, type PrepareMessage, type QuorumCertificate } from "../src/types.js";
+import { type HotStuffConfig } from "../../src/index.js";
+import BasicHotStuffNode from "../../src/hotstuff/basic.js";
+import { InMemoryDataStore } from "../../src/data/store.js";
+import { MessageKind, type PrepareMessage, type QuorumCertificate } from "../../src/types.js";
 
 /** Build a deterministic test config so ancestry behavior is isolated from timing noise. */
 function createTestConfig(): Required<HotStuffConfig> {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { type HotStuffConfig } from "../src/index.js";
-import BasicHotStuffNode from "../src/hotstuff/basic.js";
-import { InMemoryDataStore } from "../src/data/store.js";
+import { type HotStuffConfig } from "../../src/index.js";
+import BasicHotStuffNode from "../../src/hotstuff/basic.js";
+import { InMemoryDataStore } from "../../src/data/store.js";
 import { Result } from "better-result";
 import {
 	MessageKind,
@@ -10,7 +10,7 @@ import {
 	type PreCommitMessage,
 	type PrepareMessage,
 	type QuorumCertificate,
-} from "../src/types.js";
+} from "../../src/types.js";
 
 /** Build a minimal config used across tests to keep timing small and deterministic. */
 function createTestConfig(): Required<HotStuffConfig> {

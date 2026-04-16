@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { type HotStuffConfig } from "../src/index.js";
-import BasicHotStuffNode from "../src/hotstuff/basic.js";
-import { InMemoryDataStore } from "../src/data/store.js";
-import { MessageKind, type DecideMessage, type QuorumCertificate } from "../src/types.js";
+import { type HotStuffConfig } from "../../src/index.js";
+import BasicHotStuffNode from "../../src/hotstuff/basic.js";
+import { InMemoryDataStore } from "../../src/data/store.js";
+import { MessageKind, type DecideMessage, type QuorumCertificate } from "../../src/types.js";
 
 /** Build deterministic config so execution-path assertions are stable and reproducible. */
 function createTestConfig(): Required<HotStuffConfig> {

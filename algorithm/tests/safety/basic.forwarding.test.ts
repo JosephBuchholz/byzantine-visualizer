@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { type HotStuffConfig } from "../src/index.js";
-import BasicHotStuffNode from "../src/hotstuff/basic.js";
-import { InMemoryDataStore } from "../src/data/store.js";
+import { type HotStuffConfig } from "../../src/index.js";
+import BasicHotStuffNode from "../../src/hotstuff/basic.js";
+import { InMemoryDataStore } from "../../src/data/store.js";
 
 /** Build deterministic config for follower-forwarding behavior tests. */
 function createTestConfig(numNodes = 3): Required<HotStuffConfig> {

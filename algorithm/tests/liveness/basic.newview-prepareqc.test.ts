@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { type HotStuffConfig } from "../src/index.js";
-import BasicHotStuffNode from "../src/hotstuff/basic.js";
-import { InMemoryDataStore } from "../src/data/store.js";
-import { MessageKind, type NewViewMessage, type QuorumCertificate } from "../src/types.js";
+import { type HotStuffConfig } from "../../src/index.js";
+import BasicHotStuffNode from "../../src/hotstuff/basic.js";
+import { InMemoryDataStore } from "../../src/data/store.js";
+import { MessageKind, type NewViewMessage, type QuorumCertificate } from "../../src/types.js";
 
 /** Build a deterministic config so NEW-VIEW semantics tests stay isolated from timing noise. */
 function createTestConfig(numNodes = 4): Required<HotStuffConfig> {

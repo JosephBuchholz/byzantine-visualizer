@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { type HotStuffConfig } from "../src/index.js";
-import BasicHotStuffNode from "../src/hotstuff/basic.js";
-import { InMemoryDataStore } from "../src/data/store.js";
+import { type HotStuffConfig } from "../../src/index.js";
+import BasicHotStuffNode from "../../src/hotstuff/basic.js";
+import { InMemoryDataStore } from "../../src/data/store.js";
 import {
 	MessageKind,
 	type DecideMessage,
 	type PrepareMessage,
 	type QuorumCertificate,
 	type VoteMessage,
-} from "../src/types.js";
+} from "../../src/types.js";
 
 /** Build deterministic config fixtures for failure-mode simulations. */
 function createTestConfig(overrides?: Partial<Required<HotStuffConfig>>): Required<HotStuffConfig> {
