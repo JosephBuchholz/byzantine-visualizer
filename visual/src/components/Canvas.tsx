@@ -9,6 +9,7 @@ import type VisObject from "../objects/VisObject";
 import TextObject from "../objects/TextObject";
 import SimMessage, { CLIENT_ID } from "../simulation/SimMessage";
 import type { SimReplica } from "../simulation/simulationManager.ts";
+import { removeReplica, upsertReplica } from "./canvasReplicaStore";
 
 const CLIENT_SOURCE_POSITION: Point = { x: 70, y: 90 };
 
@@ -151,10 +152,11 @@ export const Canvas = forwardRef<
   }, [getColor]);
 
   const addNewReplica = (replicas: Map<string, ReplicaObject>, newReplica: ReplicaObject) => {
-    replicas.set(newReplica.id, newReplica);
-    if (newReplica.konvaNode) {
-      stageRef.current?.getLayers()[0].add(newReplica.konvaNode);
-    }
+    upsertReplica<ReplicaObject["konvaNode"], ReplicaObject>(replicas, newReplica, (node) => {
+      if (node) {
+        stageRef.current?.getLayers()[0].add(node);
+      }
+    });
     newReplica.onUpdateColor(getColor);
     positionReplicasInCircle(replicas, 300, { x: stage.stageWidth / 2, y: stage.stageHeight / 2 });
   };
@@ -225,13 +227,8 @@ export const Canvas = forwardRef<
       addNewReplica(replicas, newReplica);
     },
     removeReplica: (replicaID: string) => {
-      const replica = replicas.get(replicaID);
-      if (replica) {
-        if (replica.konvaNode) {
-          replica.konvaNode.destroy();
-        }
-        replicas.delete(replicaID);
-      } else {
+      const removed = removeReplica(replicas, replicaID);
+      if (!removed) {
         console.warn("Attempted to remove non-existent replica with ID:", replicaID);
       }
     },

@@ -41,6 +41,20 @@ export interface ProtocolPathUpdate {
   recentEvents: string[];
 }
 
+type DebugLogCategory = "state" | "step" | "path" | "backend" | "error";
+
+interface DebugLogEntry {
+  seq: number;
+  ts: string;
+  category: DebugLogCategory;
+  view: number;
+  leader: string;
+  actionId?: number;
+  action?: string;
+  message: string;
+  details?: Record<string, unknown>;
+}
+
 interface VisualStep {
   phaseUpdate: PhaseUpdate;
   messages: SimMessage[];
@@ -105,6 +119,8 @@ export default class SimulationManager {
   private onSendMessageCallback: ((message: SimMessage) => void) | null;
   private onPhaseChangeCallback: ((update: PhaseUpdate) => void) | null;
   private onProtocolPathCallback: ((update: ProtocolPathUpdate) => void) | null;
+  private onViewChangeCallback: ((viewNumber: number) => void) | null;
+  private onDebugLogCallback: ((lines: string[]) => void) | null;
 
   private replicas: Map<string, SimReplica>;
   private nodes: SteppableNode[];
@@ -124,6 +140,8 @@ export default class SimulationManager {
   private protocolPathDetail: string;
   private protocolPathEvents: string[];
   private lastProtocolPathEvent: string;
+  private timeoutTransitionsLogged: Set<number>;
+  private timeoutTransitionReportersByView: Map<number, Set<number>>;
   private injectedFaultyLeaderViews: Set<number>;
   private lastRuntimeError: string | null;
 
@@ -146,6 +164,11 @@ export default class SimulationManager {
   private emittedNewViewBatches: Set<string>;
   private actionHistory: VisualStep[];
   private currentActionIndex: number;
+  private debugLogLines: string[];
+  private debugSequence: number;
+  private userActionSequence: number;
+  private activeUserActionId: number | null;
+  private activeUserActionName: string | null;
 
   constructor() {
     this.onNewReplicaCallback = null;
@@ -153,6 +176,8 @@ export default class SimulationManager {
     this.onSendMessageCallback = null;
     this.onPhaseChangeCallback = null;
     this.onProtocolPathCallback = null;
+    this.onViewChangeCallback = null;
+    this.onDebugLogCallback = null;
 
     this.replicas = new Map();
     this.nodes = [];
@@ -172,6 +197,8 @@ export default class SimulationManager {
     this.protocolPathDetail = "Normal Basic HotStuff round progression.";
     this.protocolPathEvents = [];
     this.lastProtocolPathEvent = "";
+    this.timeoutTransitionsLogged = new Set();
+    this.timeoutTransitionReportersByView = new Map();
     this.injectedFaultyLeaderViews = new Set();
     this.lastRuntimeError = null;
 
@@ -194,6 +221,11 @@ export default class SimulationManager {
     this.emittedNewViewBatches = new Set();
     this.actionHistory = [];
     this.currentActionIndex = -1;
+    this.debugLogLines = [];
+    this.debugSequence = 0;
+    this.userActionSequence = 0;
+    this.activeUserActionId = null;
+    this.activeUserActionName = null;
   }
 
   getNumReplicas(): number {
@@ -252,8 +284,13 @@ export default class SimulationManager {
     }
 
     this.resetStepHistory(true);
+    this.resetProtocolPathEvents();
     this.lastRuntimeError = null;
     this.pendingDecideCommands.push(message);
+    this.addDebugLog("state", "Client request submitted", {
+      message,
+      pendingDecideCommands: this.pendingDecideCommands.length,
+    });
     this.enqueueClientIngressSteps(message);
     this.submitClientWriteToAllReplicas(message);
     this.setProtocolPath(
@@ -290,6 +327,10 @@ export default class SimulationManager {
 
     const next = this.pendingVisualSteps.shift() ?? null;
     if (!next) {
+      this.addDebugLog("step", "No visual step available after tick generation", {
+        simulationStarted: this.simulationStarted,
+        pendingVisualSteps: this.pendingVisualSteps.length,
+      });
       return false;
     }
 
@@ -325,6 +366,45 @@ export default class SimulationManager {
       detail: this.protocolPathDetail,
       recentEvents: [...this.protocolPathEvents],
     });
+  }
+
+  setOnViewChangeCallback(callback: (viewNumber: number) => void) {
+    this.onViewChangeCallback = callback;
+    this.onViewChangeCallback?.(this.currentViewNumber);
+  }
+
+  setOnDebugLogCallback(callback: (lines: string[]) => void) {
+    this.onDebugLogCallback = callback;
+    this.onDebugLogCallback?.([...this.debugLogLines]);
+  }
+
+  getDebugLogText(): string {
+    return this.debugLogLines.join("\n");
+  }
+
+  clearDebugLog() {
+    this.debugLogLines = [];
+    this.debugSequence = 0;
+    this.onDebugLogCallback?.([...this.debugLogLines]);
+  }
+
+  beginUserAction(actionName: string, details?: Record<string, unknown>) {
+    this.userActionSequence += 1;
+    this.activeUserActionId = this.userActionSequence;
+    this.activeUserActionName = actionName;
+    this.addDebugLog("state", `USER_ACTION_BEGIN ${actionName}`, details);
+  }
+
+  endUserAction(status: "ok" | "error" | "noop", details?: Record<string, unknown>) {
+    const actionName = this.activeUserActionName ?? "unknown";
+    const actionId = this.activeUserActionId;
+    this.addDebugLog("state", `USER_ACTION_END ${actionName}`, {
+      status,
+      actionId,
+      ...details,
+    });
+    this.activeUserActionId = null;
+    this.activeUserActionName = null;
   }
 
   private enqueueClientIngressSteps(message: string) {
@@ -377,8 +457,10 @@ export default class SimulationManager {
     const leaderIndex = this.currentLeaderIndex();
     const leaderIsFaulty = this.isFaultyNode(leaderIndex);
     const activeView = this.currentViewNumber;
+    const startIndex = this.nodes.length > 0 ? this.faultyStepEpoch % this.nodes.length : 0;
 
-    for (let index = 0; index < this.nodes.length; index++) {
+    for (let offset = 0; offset < this.nodes.length; offset++) {
+      const index = (startIndex + offset) % this.nodes.length;
       const node = this.nodes[index];
       if (!node) {
         continue;
@@ -395,6 +477,10 @@ export default class SimulationManager {
             "Faulty leader is silent in this view. Waiting for timeout-driven recovery.",
             `View ${activeView}: faulty leader ${this.toNodeId(leaderIndex)} withheld progress.`,
           );
+          this.addDebugLog("state", "Injected faulty leader silent behavior", {
+            activeView,
+            leaderId: this.toNodeId(leaderIndex),
+          });
         }
         continue;
       }
@@ -408,6 +494,10 @@ export default class SimulationManager {
       } catch (error) {
         const errorText = error instanceof Error ? error.message : String(error);
         this.lastRuntimeError = `Backend step failed at ${this.toNodeId(index)}: ${errorText}`;
+        this.addDebugLog("error", "Backend step threw exception", {
+          nodeId: this.toNodeId(index),
+          error: errorText,
+        });
 
         this.setProtocolPath(
           "funny",
@@ -440,9 +530,11 @@ export default class SimulationManager {
   }
 
   private rebuildCluster() {
+    this.clearDebugLog();
     this.clearVisualReplicas();
     this.faultyNodeIndices = this.pickRandomFaultyIndices(this.numReplicas, this.numFaults);
     this.currentViewNumber = 0;
+    this.onViewChangeCallback?.(this.currentViewNumber);
     this.injectedFaultyLeaderViews.clear();
     this.lastRuntimeError = null;
     this.setProtocolPath(
@@ -451,6 +543,11 @@ export default class SimulationManager {
       "Cluster initialized. Waiting for client input.",
       "Simulation initialized.",
     );
+    this.addDebugLog("state", "Cluster configured", {
+      numReplicas: this.numReplicas,
+      numFaults: this.numFaults,
+      faultyNodeIndices: Array.from(this.faultyNodeIndices.values()).sort((a, b) => a - b),
+    });
 
     this.nodes = [];
     for (let nodeIndex = 0; nodeIndex < this.numReplicas; nodeIndex++) {
@@ -539,7 +636,8 @@ export default class SimulationManager {
       batch.messagesBySender.set(senderId, simMessage);
       this.newViewBatches.set(batchKey, batch);
 
-      if (batch.messagesBySender.size >= this.numReplicas) {
+      const expectedQuorum = this.quorumSize();
+      if (batch.messagesBySender.size >= expectedQuorum) {
         this.emitNewViewBatch(batch, batchKey);
       }
 
@@ -915,7 +1013,62 @@ export default class SimulationManager {
     }
   }
 
-  private handleBackendLog(level: LogLevel, _nodeId: number, logMessage: string) {
+  private handleBackendLog(level: LogLevel, nodeId: number, logMessage: string) {
+    const transitionView = this.extractTransitionView(logMessage);
+    const isTimeoutTransition = logMessage.includes("via timeout");
+    const isStaleTransition =
+      transitionView !== null && Number.isFinite(transitionView) && transitionView < this.currentViewNumber;
+    const isIllegalForwardTimeoutJump =
+      isTimeoutTransition &&
+      this.currentViewNumber > 0 &&
+      transitionView !== null &&
+      Number.isFinite(transitionView) &&
+      transitionView > this.currentViewNumber + 1;
+
+    const expectedLeaderForTransition =
+      transitionView !== null && this.numReplicas > 0
+        ? transitionView % this.numReplicas
+        : null;
+
+    const isAdjacentLaterTimeoutTransition =
+      isTimeoutTransition &&
+      this.currentViewNumber >= 1 &&
+      transitionView !== null &&
+      transitionView === this.currentViewNumber + 1;
+
+    const shouldCountTimeoutReporter =
+      isAdjacentLaterTimeoutTransition && !isStaleTransition && !isIllegalForwardTimeoutJump;
+
+    const timeoutTransitionReporterCount =
+      shouldCountTimeoutReporter && transitionView !== null
+        ? this.recordTimeoutTransitionReporter(transitionView, nodeId)
+        : 0;
+
+    const hasQuorumTimeoutEvidence =
+      !isAdjacentLaterTimeoutTransition || timeoutTransitionReporterCount >= this.quorumSize();
+
+    // For timeout-based adjacent view changes, avoid promoting UI view from one follower signal.
+    // This prevents apparent leader skips when one node races ahead before quorum evidence exists.
+    const isPrematureFollowerTimeoutAdvance =
+      isAdjacentLaterTimeoutTransition &&
+      expectedLeaderForTransition !== null &&
+      nodeId !== expectedLeaderForTransition &&
+      !hasQuorumTimeoutEvidence;
+
+    this.addDebugLog("backend", "Backend log observed", {
+      level,
+      nodeId,
+      text: logMessage,
+      transitionView,
+      timeoutTransitionReporterCount,
+      expectedLeaderForTransition,
+      hasQuorumTimeoutEvidence,
+      isTimeoutTransition,
+      isStaleTransition,
+      isIllegalForwardTimeoutJump,
+      isPrematureFollowerTimeoutAdvance,
+    });
+
     if (level === LogLevel.Error) {
       console.error(logMessage);
       this.setProtocolPath(
@@ -935,35 +1088,88 @@ export default class SimulationManager {
       );
     }
 
-    if (logMessage.includes("via timeout")) {
-      this.setProtocolPath(
-        "recovery",
-        "View-Change Recovery",
-        "Timeout path triggered. Replicas are recovering via NEW-VIEW.",
-        logMessage,
-      );
+    if (isTimeoutTransition) {
+      if (isStaleTransition || isIllegalForwardTimeoutJump || isPrematureFollowerTimeoutAdvance) {
+        return;
+      }
+
+      if (transitionView !== null) {
+        if (!this.timeoutTransitionsLogged.has(transitionView)) {
+          this.timeoutTransitionsLogged.add(transitionView);
+          this.setProtocolPath(
+            "recovery",
+            "View-Change Recovery",
+            "Timeout path triggered. Replicas are recovering via NEW-VIEW.",
+            logMessage,
+          );
+        }
+      } else {
+        this.setProtocolPath(
+          "recovery",
+          "View-Change Recovery",
+          "Timeout path triggered. Replicas are recovering via NEW-VIEW.",
+          logMessage,
+        );
+      }
     }
 
-    if (logMessage.includes("Decided block")) {
-      this.setProtocolPath(
-        "healthy",
-        "Healthy Path",
-        "Round completed and committed successfully.",
-        logMessage,
-      );
-    }
+    // Ignore backend DECIDE logs for protocol-path state. These can arrive out of order
+    // across replicas and pollute the currently active client request timeline.
 
     // Keep leader visualization in sync with view changes.
     if (logMessage.includes("Transitioned to view")) {
-      const match = logMessage.match(/Transitioned to view\s+(\d+)/i);
-      if (match?.[1]) {
-        const parsed = Number(match[1]);
-        if (Number.isFinite(parsed)) {
-          this.currentViewNumber = parsed;
-        }
+      if (transitionView === null) {
+        return;
       }
-      this.refreshReplicaTypes();
+
+      const requiresQuorumTimeoutEvidence = isAdjacentLaterTimeoutTransition;
+
+      if (requiresQuorumTimeoutEvidence && timeoutTransitionReporterCount < this.quorumSize()) {
+        return;
+      }
+
+      if (
+        transitionView < this.currentViewNumber ||
+        isIllegalForwardTimeoutJump ||
+        isPrematureFollowerTimeoutAdvance
+      ) {
+        return;
+      }
+
+      if (transitionView > this.currentViewNumber) {
+        const previousView = this.currentViewNumber;
+        this.currentViewNumber = transitionView;
+        this.onViewChangeCallback?.(this.currentViewNumber);
+        this.refreshReplicaTypes();
+        this.addDebugLog("state", "Advanced tracked view from backend transition", {
+          previousView,
+          nextView: this.currentViewNumber,
+          reason: isTimeoutTransition ? "timeout" : "transition",
+        });
+      }
     }
+  }
+
+  private extractTransitionView(logMessage: string): number | null {
+    const match = logMessage.match(/Transitioned to view\s+(\d+)/i);
+    if (!match?.[1]) {
+      return null;
+    }
+
+    const parsed = Number(match[1]);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  private recordTimeoutTransitionReporter(transitionView: number, nodeId: number): number {
+    const existingReporters = this.timeoutTransitionReportersByView.get(transitionView);
+    const reporters = existingReporters ?? new Set<number>();
+    reporters.add(nodeId);
+
+    if (!existingReporters) {
+      this.timeoutTransitionReportersByView.set(transitionView, reporters);
+    }
+
+    return reporters.size;
   }
 
   private setProtocolPath(
@@ -990,6 +1196,20 @@ export default class SimulationManager {
       detail: this.protocolPathDetail,
       recentEvents: [...this.protocolPathEvents],
     });
+
+    this.addDebugLog("path", "Protocol path updated", {
+      mode,
+      title,
+      detail,
+      event,
+    });
+  }
+
+  private resetProtocolPathEvents() {
+    this.protocolPathEvents = [];
+    this.lastProtocolPathEvent = "";
+    this.timeoutTransitionsLogged.clear();
+    this.timeoutTransitionReportersByView.clear();
   }
 
   private renderStep(step: VisualStep | null, recordInHistory: boolean) {
@@ -997,13 +1217,40 @@ export default class SimulationManager {
       return;
     }
 
+    if (recordInHistory) {
+      const inferredViewFromStep = this.inferRenderedStepView(step);
+      if (inferredViewFromStep !== null && inferredViewFromStep > this.currentViewNumber) {
+        const previousView = this.currentViewNumber;
+        this.currentViewNumber = inferredViewFromStep;
+        this.onViewChangeCallback?.(this.currentViewNumber);
+        this.refreshReplicaTypes();
+        this.addDebugLog("state", "Advanced tracked view from rendered step", {
+          previousView,
+          nextView: this.currentViewNumber,
+          reason: "rendered-step",
+        });
+      }
+    }
+
     this.onPhaseChangeCallback?.(step.phaseUpdate);
+    this.addDebugLog("step", "Rendered visual step", {
+      phase: step.phaseUpdate.phase,
+      detail: step.phaseUpdate.detail,
+      messageCount: step.messages.length,
+      recordInHistory,
+    });
     for (const message of step.messages) {
       this.onSendMessageCallback?.(new SimMessage(message.content, message.fromID, message.toID));
     }
 
     // After a DECIDE round is visualized, pause stepping and wait for next client input.
     if (step.phaseUpdate.phase === "Decide") {
+      this.setProtocolPath(
+        "healthy",
+        "Healthy Path",
+        "Round completed and committed successfully.",
+        "Current request reached Decide.",
+      );
       this.simulationStarted = false;
     }
 
@@ -1029,6 +1276,36 @@ export default class SimulationManager {
     this.currentActionIndex = this.actionHistory.length - 1;
   }
 
+  private inferRenderedStepView(step: VisualStep): number | null {
+    const candidateViews: number[] = [];
+
+    for (const message of step.messages) {
+      const match = message.content.match(/\bv(\d+)\b/i);
+      if (!match?.[1]) {
+        continue;
+      }
+
+      const parsed = Number(match[1]);
+      if (Number.isFinite(parsed)) {
+        candidateViews.push(parsed);
+      }
+    }
+
+    const detailMatch = step.phaseUpdate.detail.match(/\bview\s+(\d+)\b/i);
+    if (detailMatch?.[1]) {
+      const parsedDetailView = Number(detailMatch[1]);
+      if (Number.isFinite(parsedDetailView)) {
+        candidateViews.push(parsedDetailView);
+      }
+    }
+
+    if (candidateViews.length === 0) {
+      return null;
+    }
+
+    return Math.max(...candidateViews);
+  }
+
   private resetStepHistory(preserveProcessedCommands = false) {
     this.pendingVisualSteps = [];
     this.prepareBroadcastBatches.clear();
@@ -1047,6 +1324,8 @@ export default class SimulationManager {
     this.emittedDecideBroadcastBatches.clear();
     this.newViewBatches.clear();
     this.emittedNewViewBatches.clear();
+    this.timeoutTransitionsLogged.clear();
+    this.timeoutTransitionReportersByView.clear();
     this.lastRuntimeError = null;
     this.pendingDecideCommands = [];
     if (!preserveProcessedCommands) {
@@ -1421,5 +1700,31 @@ export default class SimulationManager {
 
   private toNodeId(nodeIndex: number): string {
     return `node-${nodeIndex}`;
+  }
+
+  private addDebugLog(
+    category: DebugLogCategory,
+    message: string,
+    details?: Record<string, unknown>,
+  ) {
+    const entry: DebugLogEntry = {
+      seq: this.debugSequence,
+      ts: new Date().toISOString(),
+      category,
+      view: this.currentViewNumber,
+      leader: this.toNodeId(this.currentLeaderIndex()),
+      actionId: this.activeUserActionId ?? undefined,
+      action: this.activeUserActionName ?? undefined,
+      message,
+      details,
+    };
+    this.debugSequence += 1;
+
+    this.debugLogLines.push(JSON.stringify(entry));
+    if (this.debugLogLines.length > 500) {
+      this.debugLogLines = this.debugLogLines.slice(-500);
+    }
+
+    this.onDebugLogCallback?.([...this.debugLogLines]);
   }
 }
