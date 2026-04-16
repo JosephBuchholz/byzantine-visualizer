@@ -179,15 +179,23 @@ export default function Main() {
     }
 
     setIsAdvancingPhase(true);
-    canvasRef.current?.showClientFigure();
-    const stepFound = await simManager.current.sendClientMessageAndRunFirstPhase(message);
-    setSimulationStarted(simManager.current.isSimulationStarted());
-    setCanReplay(simManager.current.canReplayCurrentAction());
-    setCanReverse(simManager.current.canGoToPreviousAction());
-    setIsAdvancingPhase(false);
+    try {
+      canvasRef.current?.showClientFigure();
+      const stepFound = await simManager.current.sendClientMessageAndRunFirstPhase(message);
+      setSimulationStarted(simManager.current.isSimulationStarted());
+      setCanReplay(simManager.current.canReplayCurrentAction());
+      setCanReverse(simManager.current.canGoToPreviousAction());
 
-    if (!stepFound) {
-      alert("No protocol step was found. Check replica/fault settings.");
+      if (!stepFound) {
+        const runtimeError = simManager.current.getLastRuntimeError();
+        if (runtimeError) {
+          alert(runtimeError);
+        } else {
+          alert("No protocol step was found. Check replica/fault settings.");
+        }
+      }
+    } finally {
+      setIsAdvancingPhase(false);
     }
 
     setMessage("");
@@ -199,16 +207,24 @@ export default function Main() {
     }
 
     setIsAdvancingPhase(true);
-    canvasRef.current?.clearMessages();
-    canvasRef.current?.hideClientFigure();
-    const stepFound = await simManager.current.nextStep();
-    setSimulationStarted(simManager.current.isSimulationStarted());
-    setCanReplay(simManager.current.canReplayCurrentAction());
-    setCanReverse(simManager.current.canGoToPreviousAction());
-    setIsAdvancingPhase(false);
+    try {
+      canvasRef.current?.clearMessages();
+      canvasRef.current?.hideClientFigure();
+      const stepFound = await simManager.current.nextStep();
+      setSimulationStarted(simManager.current.isSimulationStarted());
+      setCanReplay(simManager.current.canReplayCurrentAction());
+      setCanReverse(simManager.current.canGoToPreviousAction());
 
-    if (!stepFound) {
-      alert("No further protocol step found from current state.");
+      if (!stepFound) {
+        const runtimeError = simManager.current.getLastRuntimeError();
+        if (runtimeError) {
+          alert(runtimeError);
+        } else {
+          alert("No further protocol step found from current state.");
+        }
+      }
+    } finally {
+      setIsAdvancingPhase(false);
     }
   };
 
@@ -378,7 +394,7 @@ export default function Main() {
                     <td className="px-2 py-1">0</td>
                     <td className="px-2 py-1">GENESIS</td>
                     <td className="px-2 py-1">-</td>
-                    <td className="px-2 py-1 text-text/80">Root</td>
+                    <td className="px-2 py-1">-</td>
                   </tr>
 
                   {processedCommands.length === 0 ? (

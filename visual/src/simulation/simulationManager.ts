@@ -125,6 +125,7 @@ export default class SimulationManager {
   private protocolPathEvents: string[];
   private lastProtocolPathEvent: string;
   private injectedFaultyLeaderViews: Set<number>;
+  private lastRuntimeError: string | null;
 
   private pendingVisualSteps: VisualStep[];
   private prepareBroadcastBatches: Map<string, PrepareBroadcastBatch>;
@@ -172,6 +173,7 @@ export default class SimulationManager {
     this.protocolPathEvents = [];
     this.lastProtocolPathEvent = "";
     this.injectedFaultyLeaderViews = new Set();
+    this.lastRuntimeError = null;
 
     this.pendingVisualSteps = [];
     this.prepareBroadcastBatches = new Map();
@@ -221,6 +223,10 @@ export default class SimulationManager {
     return this.currentActionIndex > 0;
   }
 
+  getLastRuntimeError(): string | null {
+    return this.lastRuntimeError;
+  }
+
   replayCurrentAction(): boolean {
     if (!this.canReplayCurrentAction()) {
       return false;
@@ -246,6 +252,7 @@ export default class SimulationManager {
     }
 
     this.resetStepHistory(true);
+    this.lastRuntimeError = null;
     this.pendingDecideCommands.push(message);
     this.enqueueClientIngressSteps(message);
     this.submitClientWriteToAllReplicas(message);
@@ -396,7 +403,36 @@ export default class SimulationManager {
         continue;
       }
 
-      await node.step(this.nodes);
+      try {
+        await node.step(this.nodes);
+      } catch (error) {
+        const errorText = error instanceof Error ? error.message : String(error);
+        this.lastRuntimeError = `Backend step failed at ${this.toNodeId(index)}: ${errorText}`;
+
+        this.setProtocolPath(
+          "funny",
+          "Execution Error",
+          "A backend runtime error interrupted this round. Reset or patch backend compatibility before continuing this scenario.",
+          this.lastRuntimeError,
+        );
+
+        this.pendingVisualSteps.push({
+          phaseUpdate: {
+            phase: "Execution Error",
+            detail: this.lastRuntimeError,
+            steps: [
+              `Failing node: ${this.toNodeId(index)}`,
+              "Frontend remains responsive; no additional backend steps are executed for this round.",
+              "Use Reset Simulation to start a fresh run.",
+            ],
+          },
+          messages: [],
+        });
+
+        this.simulationStarted = false;
+        return;
+      }
+
       if (this.pendingVisualSteps.length > 0) {
         return;
       }
@@ -408,6 +444,7 @@ export default class SimulationManager {
     this.faultyNodeIndices = this.pickRandomFaultyIndices(this.numReplicas, this.numFaults);
     this.currentViewNumber = 0;
     this.injectedFaultyLeaderViews.clear();
+    this.lastRuntimeError = null;
     this.setProtocolPath(
       "healthy",
       "Healthy Path",
@@ -1010,6 +1047,7 @@ export default class SimulationManager {
     this.emittedDecideBroadcastBatches.clear();
     this.newViewBatches.clear();
     this.emittedNewViewBatches.clear();
+    this.lastRuntimeError = null;
     this.pendingDecideCommands = [];
     if (!preserveProcessedCommands) {
       this.processedCommands = [];

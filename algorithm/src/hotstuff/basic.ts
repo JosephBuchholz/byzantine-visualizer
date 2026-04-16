@@ -595,6 +595,7 @@ export default class BasicHotStuffNode implements HotStuffNode {
 
 		if (shouldBeLeader) {
 			if (this.leaderState) {
+				this.ensureLeaderStateCollections();
 				// Keep mirrored leader view aligned with replica view as views advance.
 				this.leaderState.viewNumber = this.replicaState.viewNumber;
 				return;
@@ -621,6 +622,28 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			LogLevel.Info,
 			`Stepped down from leader role at view ${this.replicaState.viewNumber}.`,
 		);
+	}
+
+	/**
+	 * Compatibility guard for tests/callers that seed leaderState manually.
+	 * Ensures mutable leader collections exist before they are read or cleared.
+	 */
+	private ensureLeaderStateCollections(): void {
+		if (!this.leaderState) {
+			return;
+		}
+
+		if (!(this.leaderState.pendingVotes instanceof Map)) {
+			this.leaderState.pendingVotes = new Map();
+		}
+
+		if (!(this.leaderState.finalizedVoteBuckets instanceof Set)) {
+			this.leaderState.finalizedVoteBuckets = new Set();
+		}
+
+		if (!Array.isArray(this.leaderState.collectedNewViews)) {
+			this.leaderState.collectedNewViews = [];
+		}
 	}
 
 	/** Compute the 2f+1 quorum threshold for vote aggregation. */
@@ -724,6 +747,8 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			return;
 		}
 
+		this.ensureLeaderStateCollections();
+
 		// Reject invalid evidence before it can affect leader state or highQC selection.
 		if (
 			!this.verifyQuorumCertificate(message.prepareQC, message.prepareQC.type, "NEW-VIEW evidence")
@@ -808,6 +833,7 @@ export default class BasicHotStuffNode implements HotStuffNode {
 
 		this.replicaState.viewNumber = nextView;
 		if (this.leaderState) {
+			this.ensureLeaderStateCollections();
 			this.leaderState.viewNumber = nextView;
 			this.leaderState.pendingVotes.clear();
 			this.leaderState.finalizedVoteBuckets.clear();
@@ -1537,6 +1563,8 @@ export default class BasicHotStuffNode implements HotStuffNode {
 		if (!this.leaderState) {
 			return; // Only the leader aggregates votes
 		}
+
+		this.ensureLeaderStateCollections();
 
 		// Keep vote buckets isolated by phase and node so PREPARE/PRE-COMMIT/COMMIT votes
 		// for the same block do not collide during duplicate checks and quorum counting.
