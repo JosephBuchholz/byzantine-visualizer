@@ -142,6 +142,8 @@ export interface ReplicaState {
 export interface LeaderState extends ReplicaState {
 	// Pending votes keyed by the proposed node hash.
 	pendingVotes: Map<string, VoteMessage[]>;
+	// Vote buckets that already produced a phase transition (prevents duplicate broadcasts).
+	finalizedVoteBuckets: Set<string>;
 	collectedNewViews: NewViewMessage[];
 }
 

@@ -4,6 +4,8 @@ import VisObject from "./VisObject";
 
 const MESSAGE_WIDTH = 40;
 const MESSAGE_HEIGHT = 10;
+const SELF_LOOP_RADIUS = 76;
+const SELF_LOOP_ANGULAR_SPEED = 0.006;
 
 function elipsiseText(text: string, maxLength: number): string {
   if (text.length <= maxLength) {
@@ -19,12 +21,17 @@ export default class MessageObject extends VisObject {
   konvaNode: Konva.Rect | null;
   konvaTextNode: Konva.Text | null;
   destinationReplicaID: string;
+  sourceReplicaID: string;
   message: string;
   onDestroy: () => void;
   getReplicaPosition: (replicaID: string) => Point | null;
+  isClientMessage: boolean;
+  isSelfLoopMessage: boolean;
+  loopProgress: number;
 
   constructor(
     initialPosition: Point,
+    sourceReplicaID: string,
     destinationReplicaID: string,
     message: string,
     onDestroy: () => void,
@@ -32,10 +39,14 @@ export default class MessageObject extends VisObject {
   ) {
     super(initialPosition);
     this.onDestroy = onDestroy;
+    this.sourceReplicaID = sourceReplicaID;
     this.destinationReplicaID = destinationReplicaID;
     this.message = message;
     this.getReplicaPosition = getReplicaPosition;
-    this.color = "primary";
+    this.isClientMessage = this.message.toUpperCase().includes("CLIENT");
+    this.isSelfLoopMessage = this.sourceReplicaID === this.destinationReplicaID;
+    this.loopProgress = 0;
+    this.color = this.isClientMessage ? "accent" : "primary";
     this.textColor = "text";
     this.angle = 0;
     this.konvaNode = new Konva.Rect({
@@ -43,6 +54,8 @@ export default class MessageObject extends VisObject {
       width: 40,
       height: 10,
       fill: "#000000",
+      stroke: this.isClientMessage ? "#111111" : undefined,
+      strokeWidth: this.isClientMessage ? 2 : 0,
     });
     this.konvaNode.on("mouseover", () => {
       this.onHover();
@@ -54,11 +67,15 @@ export default class MessageObject extends VisObject {
     this.konvaTextNode = new Konva.Text({
       position: { x: this.position.x, y: this.position.y },
       text: elipsiseText(this.message, 8),
-      fontSize: 12,
+      fontSize: this.isClientMessage ? 14 : 12,
       fill: "#000000",
       listening: false,
       visible: false,
     });
+
+    if (this.isClientMessage) {
+      this.konvaNode.scale({ x: 1.35, y: 1.35 });
+    }
   }
 
   onHover() {
@@ -149,6 +166,30 @@ export default class MessageObject extends VisObject {
   }
 
   onUpdate(deltaTime: number) {
+    if (this.isSelfLoopMessage) {
+      const centerPos = this.getReplicaPosition(this.sourceReplicaID);
+      if (!centerPos) {
+        this.onDestroy();
+        return;
+      }
+
+      this.loopProgress += SELF_LOOP_ANGULAR_SPEED * deltaTime;
+
+      const theta = -Math.PI / 2 + this.loopProgress;
+      const loopPosition: Point = {
+        x: centerPos.x + Math.cos(theta) * SELF_LOOP_RADIUS,
+        y: centerPos.y + Math.sin(theta) * SELF_LOOP_RADIUS,
+      };
+
+      this.setPosition(loopPosition);
+      this.setRotation(theta + Math.PI / 2);
+
+      if (this.loopProgress >= Math.PI * 2) {
+        this.onDestroy();
+      }
+      return;
+    }
+
     const destPos = this.getReplicaPosition(this.destinationReplicaID);
     if (!destPos) {
       this.onDestroy();

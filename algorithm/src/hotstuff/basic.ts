@@ -604,6 +604,7 @@ export default class BasicHotStuffNode implements HotStuffNode {
 			this.leaderState = {
 				...this.replicaState,
 				pendingVotes: new Map(),
+				finalizedVoteBuckets: new Set(),
 				collectedNewViews: [],
 			};
 			this.log(LogLevel.Info, `Became leader for view ${this.replicaState.viewNumber}.`);
@@ -809,6 +810,7 @@ export default class BasicHotStuffNode implements HotStuffNode {
 		if (this.leaderState) {
 			this.leaderState.viewNumber = nextView;
 			this.leaderState.pendingVotes.clear();
+			this.leaderState.finalizedVoteBuckets.clear();
 			this.leaderState.collectedNewViews = [];
 		}
 
@@ -1539,6 +1541,10 @@ export default class BasicHotStuffNode implements HotStuffNode {
 		// Keep vote buckets isolated by phase and node so PREPARE/PRE-COMMIT/COMMIT votes
 		// for the same block do not collide during duplicate checks and quorum counting.
 		const voteBucketKey = `${vote.voteType}:${vote.nodeHash}`;
+		if (this.leaderState.finalizedVoteBuckets.has(voteBucketKey)) {
+			return; // Transition for this phase+node already executed.
+		}
+
 		const votesForNode = this.leaderState.pendingVotes.get(voteBucketKey) ?? [];
 		if (votesForNode.some((v) => v.senderId === vote.senderId)) {
 			return; // Ignore duplicates from the same sender
@@ -1550,6 +1556,9 @@ export default class BasicHotStuffNode implements HotStuffNode {
 		if (votesForNode.length < this.quorumSize()) {
 			return; // Need more votes to form a QC
 		}
+
+		// Latch this bucket before broadcasting the next phase so late votes cannot re-trigger.
+		this.leaderState.finalizedVoteBuckets.add(voteBucketKey);
 
 		// Combine votes into a synthetic QC once quorum is met.
 		// The deterministic signature keeps the simulator's verification path local and testable.
@@ -1624,14 +1633,17 @@ export default class BasicHotStuffNode implements HotStuffNode {
 				justify: qc,
 			};
 
+			// Broadcast DECIDE to peers first so visualization and message ordering
+			// reflect protocol phase progression before local NEW-VIEW emission.
 			for (const node of nodes) {
 				if (node.id === this.id) {
-					// Leader also finalizes locally when commitQC is formed.
-					await this.handleDecideMessage(decide, nodes);
 					continue;
 				}
 				node.message(decide);
 			}
+
+			// Leader also finalizes locally when commitQC is formed.
+			await this.handleDecideMessage(decide, nodes);
 
 			this.log(LogLevel.Info, `Broadcast DECIDE for ${vote.nodeHash} with QC.`);
 		}

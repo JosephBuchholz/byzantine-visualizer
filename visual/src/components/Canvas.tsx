@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from "react";
 import Konva from "konva";
 import { useTheme } from "../hooks/useTheme";
 import ReplicaObject from "../objects/ReplicaObject";
@@ -8,7 +8,9 @@ import MessageObject from "../objects/MessageObject";
 import type VisObject from "../objects/VisObject";
 import TextObject from "../objects/TextObject";
 import SimMessage, { CLIENT_ID } from "../simulation/SimMessage";
-import type { SimReplica } from "../simulation/simulationManager";
+import type { SimReplica } from "../simulation/simulationManager.ts";
+
+const CLIENT_SOURCE_POSITION: Point = { x: 70, y: 90 };
 
 function positionReplicasInCircle(replicas: Map<string, ReplicaObject>, radius: number, center: Point) {
   const angleStep = (2 * Math.PI) / replicas.size;
@@ -29,6 +31,9 @@ export interface CanvasHandle {
   changePhase: (phase: string) => void;
   addNewReplica: (replica: SimReplica) => void;
   removeReplica: (replicaID: string) => void;
+  clearMessages: () => void;
+  showClientFigure: () => void;
+  hideClientFigure: () => void;
 }
 
 export const Canvas = forwardRef<
@@ -49,6 +54,101 @@ export const Canvas = forwardRef<
   const messages: MessageObject[] = useMemo(() => [], []);
   const objects: VisObject[] = useMemo(() => [], []);
   const phaseText = useMemo(() => new TextObject("Phase: Initial", "text", { x: 15, y: 15 }), []);
+  const clientOverlayRef = useRef<Konva.Group | null>(null);
+  const clientOverlayColorRef = useRef("#111111");
+
+  const ensureClientOverlayVisible = () => {
+    const layer = stageRef.current?.getLayers()[0] ?? null;
+    if (!layer) {
+      return;
+    }
+
+    if (!clientOverlayRef.current) {
+      const group = new Konva.Group({
+        x: CLIENT_SOURCE_POSITION.x,
+        y: CLIENT_SOURCE_POSITION.y,
+        listening: false,
+      });
+
+      const head = new Konva.Circle({
+        x: 0,
+        y: -26,
+        radius: 10,
+        fill: clientOverlayColorRef.current,
+      });
+      const body = new Konva.Line({
+        points: [0, -16, 0, 10],
+        stroke: clientOverlayColorRef.current,
+        strokeWidth: 3,
+      });
+      const arms = new Konva.Line({
+        points: [-12, -4, 12, -4],
+        stroke: clientOverlayColorRef.current,
+        strokeWidth: 3,
+      });
+      const leftLeg = new Konva.Line({
+        points: [0, 10, -12, 26],
+        stroke: clientOverlayColorRef.current,
+        strokeWidth: 3,
+      });
+      const rightLeg = new Konva.Line({
+        points: [0, 10, 12, 26],
+        stroke: clientOverlayColorRef.current,
+        strokeWidth: 3,
+      });
+      const label = new Konva.Text({
+        x: -24,
+        y: 30,
+        width: 48,
+        text: "Client",
+        align: "center",
+        fontSize: 12,
+        fill: clientOverlayColorRef.current,
+      });
+
+      group.add(head);
+      group.add(body);
+      group.add(arms);
+      group.add(leftLeg);
+      group.add(rightLeg);
+      group.add(label);
+      clientOverlayRef.current = group;
+    }
+
+    const overlay = clientOverlayRef.current;
+    if (!overlay) {
+      return;
+    }
+
+    overlay.position(CLIENT_SOURCE_POSITION);
+    if (!overlay.getLayer()) {
+      layer.add(overlay);
+    }
+    overlay.visible(true);
+  };
+
+  const hideClientOverlay = () => {
+    clientOverlayRef.current?.visible(false);
+  };
+
+  const updateClientOverlayColor = useCallback(() => {
+    const nextColor = getColor("text") ?? "#111111";
+    clientOverlayColorRef.current = nextColor;
+
+    const overlay = clientOverlayRef.current;
+    if (!overlay) {
+      return;
+    }
+
+    overlay.getChildren().forEach((child) => {
+      if (child instanceof Konva.Shape || child instanceof Konva.Text) {
+        child.fill(nextColor);
+      }
+      if (child instanceof Konva.Line) {
+        child.stroke(nextColor);
+      }
+    });
+  }, [getColor]);
 
   const addNewReplica = (replicas: Map<string, ReplicaObject>, newReplica: ReplicaObject) => {
     replicas.set(newReplica.id, newReplica);
@@ -77,7 +177,7 @@ export const Canvas = forwardRef<
 
   const getReplicaPositionFromID = (replicaID: string): Point => {
     if (replicaID === CLIENT_ID) {
-      return { x: stage.stageWidth / 2, y: stage.stageHeight - 100 };
+      return CLIENT_SOURCE_POSITION;
     }
 
     const replica = replicas.get(replicaID);
@@ -92,8 +192,14 @@ export const Canvas = forwardRef<
   // Events exposed to parent component
   useImperativeHandle(ref, () => ({
     sendMessage: (message: SimMessage) => {
+      const isClientSource = message.fromID === CLIENT_ID;
+      if (isClientSource) {
+        ensureClientOverlayVisible();
+      }
+
       const newMessage = new MessageObject(
         getReplicaPositionFromID(message.fromID),
+        message.fromID,
         message.toID,
         message.content,
         () => {
@@ -129,6 +235,14 @@ export const Canvas = forwardRef<
         console.warn("Attempted to remove non-existent replica with ID:", replicaID);
       }
     },
+    clearMessages: () => {
+      for (const message of [...messages]) {
+        message.destroyKonvaNode();
+      }
+      messages.length = 0;
+    },
+    showClientFigure: () => ensureClientOverlayVisible(),
+    hideClientFigure: () => hideClientOverlay(),
   }));
 
   useEffect(() => {
@@ -145,6 +259,8 @@ export const Canvas = forwardRef<
     stageRef.current.add(layer);
 
     addNewObject(objects, phaseText);
+    ensureClientOverlayVisible();
+    updateClientOverlayColor();
 
     replicas.forEach((replica) => {
       if (replica.konvaNode) {
@@ -181,11 +297,15 @@ export const Canvas = forwardRef<
 
     return () => {
       mainAnimation.stop();
+      clientOverlayRef.current?.destroy();
+      clientOverlayRef.current = null;
     };
   });
 
   // Update colors on theme change
   useEffect(() => {
+    updateClientOverlayColor();
+
     replicas.forEach((replica) => {
       replica.onUpdateColor(getColor);
     });
@@ -197,7 +317,7 @@ export const Canvas = forwardRef<
     objects.forEach((object) => {
       object.onUpdateColor(getColor);
     });
-  }, [replicas, messages, objects, getColor]);
+  }, [replicas, messages, objects, getColor, updateClientOverlayColor]);
 
   return <div ref={containerRef} />;
 });

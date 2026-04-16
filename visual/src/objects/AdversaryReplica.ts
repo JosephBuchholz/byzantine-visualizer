@@ -1,6 +1,6 @@
 import Konva from "konva";
 import ReplicaObject, { REPLICA_SIZE } from "./ReplicaObject";
-import type { SimReplica } from "../simulation/simulationManager";
+import type { SimReplica } from "../simulation/simulationManager.ts";
 
 const ADVERSARY_REPLICA_COLOR = "accent";
 
@@ -15,6 +15,8 @@ export default class AdversaryReplica extends ReplicaObject {
       radius: REPLICA_SIZE / 2,
       fill: "#000000",
     });
+
+    this.attachLeaderMarker();
 
     this.initKonvaNode();
   }
